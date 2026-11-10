@@ -1,0 +1,43 @@
+# ---- footage and everything generated from it (tens of GB) ----
+raw_footage/
+datasets/
+pipeline_outputs/*
+!pipeline_outputs/_analysis/
+pipeline_outputs/_analysis/*
+!pipeline_outputs/_analysis/benchmark_history.csv
+!pipeline_outputs/_analysis/heldout_audit_*.md
+*.mp4
+*.MP4
+*.mov
+*.avi
+*.mkv
+*.npz
+*.partial
+
+# ---- environments, IDE, labelling-tool databases ----
+.venv/
+.venv_labelstudio/
+.idea/
+.label_studio_data/
+.vscode/
+__pycache__/
+*.pyc
+
+# ---- training output and downloadable base weights (the trained detectors in models/ ARE kept) ----
+runs/
+training_runs/
+yolo*.pt
+src/yolo*.pt
+models/*_openvino_model/
+bin/duplicate_weights/
+bin/superseded_models/
+bin/incomplete_training_runs/
+
+# ---- the packaged app (rebuilt by tools/build_exe.py) ----
+build/
+dist/
+*.spec.bak
+
+# ---- local per-machine files ----
+.claude/
+tools/review_tool/state.json
