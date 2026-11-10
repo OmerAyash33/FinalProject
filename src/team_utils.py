@@ -2,9 +2,12 @@
 Team identity helpers shared by Stage 1 (live preview colours) and Stage 2 (the real assignment).
 
 Convention used everywhere: team 0 = Team A = OUR team (drawn yellow), team 1 = Team B = the opponents
-(drawn magenta). KMeans only says "cluster 0 / cluster 1" in arbitrary order, so the clusters are told
-apart by BRIGHTNESS - the lighter centre is the "light" team, the darker the "dark" one - and the
-per-session setting event_params.OUR_SHADE_* says which of the two is ours.
+(drawn magenta). Which colour is ours comes, in order of preference, from
+  1. the user's own pick for this session (team_colors.json, written by team_color_picker.py): the reference colour is the
+     median of the shirts the user clicked, TeamModel.from_reference;
+  2. the per-session light/dark rule: KMeans only says "cluster 0 / cluster 1" in arbitrary order, so the clusters are told
+     apart by BRIGHTNESS and event_params.OUR_SHADE_* says whether ours is the lighter or the darker one.
+build_team_model() applies this choice.
 """
 import os
 
@@ -73,6 +76,33 @@ class TeamModel:
         self.ours_cluster = int(np.where(self.to_team == 0)[0][0])
         self.theirs_cluster = int(np.where(self.to_team == 1)[0][0])
 
+    @classmethod
+    def from_reference(cls, colors_bgr, ours_bgr, theirs_bgr=None):
+        """
+        Model whose "ours" colour is the one the USER picked: the median (in team_features space) of the clicked shirts `ours_bgr`.
+        "Theirs" is the median of the shirts the user marked as opponents, or - when they only picked their own colour - the
+        KMeans centre (of all `colors_bgr`) that lies farthest from ours. Works for any colour (yellow, blue, red ...): there is no
+        light/dark rule involved.
+        """
+        from sklearn.cluster import KMeans  # lazy, see __init__
+        self = cls.__new__(cls)
+        ours = np.atleast_2d(np.asarray(ours_bgr, dtype=float))
+        f_ours = np.median(team_features(ours), axis=0)
+        if theirs_bgr is not None and len(theirs_bgr) > 0:
+            theirs = np.atleast_2d(np.asarray(theirs_bgr, dtype=float))
+            f_theirs, bgr_theirs = np.median(team_features(theirs), axis=0), np.median(theirs, axis=0)
+        else:
+            colors = np.asarray(colors_bgr, dtype=float)
+            km = KMeans(n_clusters=2, random_state=42, n_init="auto").fit(team_features(colors))
+            far = int(np.argmax(np.linalg.norm(km.cluster_centers_ - f_ours, axis=1)))
+            f_theirs, bgr_theirs = km.cluster_centers_[far], colors[km.labels_ == far].mean(axis=0)
+        self.feat_centers = np.vstack([f_ours, f_theirs])
+        self.bgr_centers = np.vstack([np.median(ours, axis=0), bgr_theirs])
+        self.shade = "reference"
+        self.to_team = np.array([0, 1])
+        self.ours_cluster, self.theirs_cluster = 0, 1
+        return self
+
     def prob_ours(self, colors_bgr):
         """P(our team) per colour in 0..1 from the distances to the two centres (0.5 = exactly between them)."""
         d = np.linalg.norm(team_features(colors_bgr)[:, None, :] - self.feat_centers[None, :, :], axis=2)
@@ -82,6 +112,15 @@ class TeamModel:
     def team(self, colors_bgr):
         """Array of 0 (ours) / 1 (opponent), one per colour."""
         return np.where(self.prob_ours(colors_bgr) >= 0.5, 0, 1)
+
+
+def build_team_model(colors_bgr, session):
+    """The team model of a session: from the user's picked colours when team_colors.json has them, else KMeans + the light/dark rule."""
+    from team_colors import load_reference   # lazy: keeps team_utils importable without the json file machinery
+    ref = load_reference(session)
+    if ref is not None:
+        return TeamModel.from_reference(colors_bgr, ref["ours"], ref["theirs"] if len(ref["theirs"]) else None)
+    return TeamModel(colors_bgr, our_shade(session))
 
 
 def team_color(team):
@@ -105,8 +144,9 @@ class LiveTeamColorizer:
     recomputes every team from the whole video - so a preview colour can differ slightly.
     """
 
-    def __init__(self, shade, min_samples=60, refit_every=45, max_samples=2500):
+    def __init__(self, shade, min_samples=60, refit_every=45, max_samples=2500, reference=None):
         self.shade = shade
+        self.reference = reference   # team_colors.load_reference() dict or None
         self.min_samples = min_samples
         self.refit_every = refit_every
         self.max_samples = max_samples
@@ -122,7 +162,9 @@ class LiveTeamColorizer:
                 self.samples.pop(np.random.randint(len(self.samples)))
             self.samples.append(c)
         if len(self.samples) >= self.min_samples and frame_no - self._last_fit_frame >= self.refit_every:
-            self.model = TeamModel(np.asarray(self.samples), self.shade, random_state=0)
+            samples = np.asarray(self.samples)
+            self.model = (TeamModel.from_reference(samples, self.reference["ours"], self.reference["theirs"] if len(self.reference["theirs"]) else None)
+                          if self.reference is not None else TeamModel(samples, self.shade, random_state=0))
             self._last_fit_frame = frame_no
 
     def team_for(self, track_id, color_bgr, box_height):

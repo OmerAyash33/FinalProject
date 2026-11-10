@@ -26,6 +26,19 @@ python src/main.py
 Needs an NVIDIA GPU for reasonable speed. The trained detectors are in `models/` (`match_detector_v2.pt` is the default,
 see `src/config.py`). Footage, extracted data and rendered videos are NOT in the repository.
 
+## The app (drop videos in, get highlights)
+
+`src/app.py` is a desktop window: drag videos in, press start. It extracts the detections, then asks you to click a few players of
+YOUR team (`src/team_color_picker.py`: left click = ours, right click = opponent, N = next player; the median of the clicked shirts
+becomes the reference colour of the session, stored in `team_colors.json`, so any colour works - yellow, blue, red), then renders the
+highlight videos. Without a picked colour the old light/dark rule is used (`event_params.OUR_SHADE_*`).
+
+```
+python src/app.py                  # run from source
+python tools/build_exe.py          # -> dist/FootballHighlights/FootballHighlights.exe (several GB, copy the whole folder)
+python src/team_color_picker.py <session folder in raw_footage>    # only the colour picker (needs extracted data)
+```
+
 ## Measuring progress
 
 `tools/review_tool/review_tool.py` is a desktop tool to label moments (pass completed / incomplete, shot, goal, dribble) while

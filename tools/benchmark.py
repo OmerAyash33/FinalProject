@@ -34,7 +34,7 @@ from audio_utils import AudioTrack, audio_path_for
 from ball_track import BallTrack
 from config import DETECTOR_VERSION
 from event_detection import Scene, detect_events
-from team_utils import TeamModel, our_shade, session_of
+from team_utils import build_team_model, session_of
 
 LABELS = os.path.join(PROJECT_ROOT, "tools", "review_tool", "labels.csv")
 HISTORY = os.path.join(PROJECT_ROOT, "pipeline_outputs", "_analysis", "benchmark_history.csv")
@@ -64,7 +64,7 @@ def stage2_events(session, video):
     if pl["track_id"].nunique() >= 2:
         sc, ln = pl.groupby("track_id")[cols].median(), pl.groupby("track_id").size()
         fit = sc[ln >= 8] if (ln >= 8).sum() >= 2 else sc
-        model = TeamModel(fit[cols].values, our_shade(session_of(raw)))
+        model = build_team_model(fit[cols].values, session_of(raw))
         sc["team_cluster"] = model.team(sc[cols].values)
         df = df.merge(sc[["team_cluster"]], on="track_id", how="left")
     else:

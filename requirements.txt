@@ -32,6 +32,8 @@ openvino-telemetry==2025.2.0
 packaging==26.1
 pandas==3.0.2
 pillow==12.2.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
 polars==1.40.0
 polars-runtime-32==1.40.0
 psutil==7.2.2
@@ -58,3 +60,4 @@ tzdata==2026.1
 ultralytics==8.4.39
 ultralytics-thop==2.0.18
 urllib3==2.6.3
+tkinterdnd2==0.7.0

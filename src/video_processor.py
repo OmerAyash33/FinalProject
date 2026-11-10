@@ -18,6 +18,7 @@ from config import (TARGET_WIDTH, PREVIEW_WIDTH, CSV_WRITE_CHUNK, UI_COLORS, UI_
 from logging_utils import log
 from camera_motion import CameraMotionEstimator
 from event_params import TEAM_MIN_BOX_HEIGHT_PX
+from team_colors import load_reference
 from team_utils import LiveTeamColorizer, our_shade, session_of, team_color
 from video_reader import FastVideoReader
 from yolo_utils import load_yolo_model
@@ -100,7 +101,8 @@ class VideoProcessor:
         match_data = []
         camera = CameraMotionEstimator()
         # Live team colours for the preview only (Stage 2 does the real clustering from the whole video).
-        colorizer = LiveTeamColorizer(our_shade(session_of(self.video_path))) if self.show_preview else None
+        colorizer = (LiveTeamColorizer(our_shade(session_of(self.video_path)), reference=load_reference(session_of(self.video_path)))
+                     if self.show_preview else None)
         frame_counter = 0
         frame_times = deque()  # rolling 3-second window of timestamps, used only for the live FPS readout
         last_fps_update_time = time.time()

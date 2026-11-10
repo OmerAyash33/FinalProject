@@ -5,6 +5,7 @@ Centralized here so every stage reads the exact same values instead of each
 file redefining its own copy.
 """
 import os
+import sys
 import cv2
 import torch
 
@@ -37,7 +38,7 @@ PREVIEW_WIDTH = 1280
 # What it does: show the live "Football Video" window while Stage 1 extracts data (boxes, team colours, Players/Ball/Goal read-out).
 # Measured on this machine: with the window ~8 frames/s, without it ~48 frames/s (a 5-minute video takes ~3.5 min instead of ~19).
 # Set False for batch runs; tools/extract_data_only.py always runs without it. The CSV is identical either way.
-LIVE_PREVIEW = True
+LIVE_PREVIEW = os.environ.get("FOOTBALL_LIVE_PREVIEW", "1") != "0"   # the packaged app (src/app.py) sets FOOTBALL_LIVE_PREVIEW=0
 
 # What it does: how many extracted-data rows accumulate in RAM before being
 # flushed to the CSV on disk.
@@ -64,10 +65,10 @@ CSV_WRITE_CHUNK = 1800
 # so a run with one version can never be mistaken for, or silently reuse, another version's CSVs.
 # Paths are resolved relative to this file, not the process's working directory, so they load
 # correctly no matter where the pipeline is launched from.
-DETECTOR_VERSION = "v2"
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DETECTOR_MODEL_PATH = os.path.join(_PROJECT_ROOT, "models", f"match_detector_{DETECTOR_VERSION}.pt")
-DETECTOR_MODEL_OPENVINO_DIR = os.path.join(_PROJECT_ROOT, "models", f"match_detector_{DETECTOR_VERSION}_openvino_model")
+# The switch itself (DETECTOR_VERSION = "v2") and the project / bundle / app roots live in app_paths.py, which imports nothing heavy.
+from app_paths import APP_ROOT, BUNDLE_ROOT, DETECTOR_VERSION, FROZEN, PROJECT_ROOT as _PROJECT_ROOT  # noqa: F401
+DETECTOR_MODEL_PATH = os.path.join(BUNDLE_ROOT, "models", f"match_detector_{DETECTOR_VERSION}.pt")
+DETECTOR_MODEL_OPENVINO_DIR = os.path.join(BUNDLE_ROOT, "models", f"match_detector_{DETECTOR_VERSION}_openvino_model")
 # Every trained version uses this same class map (data.yaml: person/ball/goal) -
 # fixed by training, not COCO's ids anymore.
 PERSON_CLASS_ID = 0

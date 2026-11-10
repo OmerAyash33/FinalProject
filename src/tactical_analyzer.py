@@ -13,7 +13,8 @@ from ball_track import BallTrack
 from event_detection import detect_events
 from event_scoring import score_events
 from logging_utils import log
-from team_utils import TeamModel, our_shade, session_of
+from team_colors import load_reference
+from team_utils import build_team_model, our_shade, session_of
 
 # Only tracks at or above this length vote on where the two team colors
 # actually are. ByteTrack churns IDs hard enough that median track length
@@ -81,11 +82,15 @@ class DataAnalyzer:
             log(f"DataAnalyzer: Starting KMeans clustering to detect teams "
                 f"({len(fit_source)}/{len(stable_colors)} usable tracks used to fit)...")
             # Two jersey colours, no separate referee cluster. Short/noisy tracks never shape the fit, they only get a label.
-            model = TeamModel(fit_source[color_cols].values, shade)
+            model = build_team_model(fit_source[color_cols].values, session_of(self.raw_csv))
             stable_colors["team_cluster"] = model.team(stable_colors[color_cols].values)
             df = df.merge(stable_colors[["team_cluster"]], on="track_id", how="left")
-            log(f"DataAnalyzer: our shade is '{shade}': Team A (ours, yellow) = the {shade} cluster, Team B (magenta) = the other. "
-                f"Players too small or without a stable track stay unassigned (grey).")
+            if load_reference(session_of(self.raw_csv)) is not None:
+                log("DataAnalyzer: our team colour = the shirt colour you picked for this session (team_colors.json): Team A (ours, yellow) = players "
+                    "closest to it, Team B (magenta) = the others. Players too small or without a stable track stay unassigned (grey).")
+            else:
+                log(f"DataAnalyzer: our shade is '{shade}': Team A (ours, yellow) = the {shade} cluster, Team B (magenta) = the other. "
+                    f"Players too small or without a stable track stay unassigned (grey).")
         else:
             df["team_cluster"] = np.nan  # fewer than 2 usable tracked players -> nothing to cluster
 

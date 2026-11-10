@@ -68,7 +68,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 
-def process_session(input_dir, output_dir):
+def process_session(input_dir, output_dir, video_files=None, stages="all"):
     """
     Push every video in `input_dir` (a single raw_footage/<session> folder)
     through all three stages, writing every generated file into `output_dir`
@@ -94,15 +94,20 @@ def process_session(input_dir, output_dir):
         re-doing the already-finished stage(s) for that video.
     After changing event_params.py, delete the *_events.csv files (and the
     *_highlights.mp4 of the videos whose selection changed) to apply it.
+
+    `video_files`: an explicit list of video paths (any folder, any extension) instead of every *.MP4 of `input_dir`.
+    `stages`: "all" (default), "extract" (Stage 1 + the audio cue only) or "analyze" (Stage 2, the selection and Stage 3 for videos that
+    are already extracted). The packaged app (src/app.py) runs "extract", lets the user pick the team colour from the extracted
+    detections, then runs "analyze".
     """
     os.makedirs(output_dir, exist_ok=True)
-    video_files = sorted(glob.glob(os.path.join(input_dir, "*.MP4")))
+    video_files = list(video_files) if video_files else sorted(glob.glob(os.path.join(input_dir, "*.MP4")))
 
     if not video_files:
         print(f"No videos found in {input_dir}")
         return
 
-    # ---- Stages 1 + 2 for every video ----
+    # ---- Stages 1 + 2 for every video (or only one of them, see `stages`) ----
     paths = {}
     for video_path in video_files:
         base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -114,6 +119,10 @@ def process_session(input_dir, output_dir):
         print(f"\n{'=' * 50}\nProcessing Video: {base_name}\n{'=' * 50}")
         video_start_time = time.time()
         if not os.path.exists(raw_csv):
+            if stages == "analyze":
+                log(f"{base_name}: no extracted data (run the extraction first), skipping this video.")
+                paths.pop(base_name)
+                continue
             VideoProcessor(video_path, raw_csv, show_preview=LIVE_PREVIEW).process_video(chunk_seconds=5)
         else:
             log(f"{base_name}: raw data CSV already exists, skipping extraction (Stage 1).")
@@ -123,11 +132,18 @@ def process_session(input_dir, output_dir):
             log(f"{base_name}: extracting the kick-sound cue from the audio track..." if extract_audio_features(video_path, audio_npz)
                 else f"{base_name}: no audio track or PyAV missing (pip install av): kick-sound cue skipped.")
 
+        if stages == "extract":
+            log(f"Video {base_name}: extraction done in {time.time() - video_start_time:.1f} seconds.")
+            continue
+
         if not os.path.exists(events_csv):
             DataAnalyzer(raw_csv, events_csv).run_advanced_analytics()
         else:
             log(f"{base_name}: events CSV already exists, skipping tactical analysis (Stage 2).")
         log(f"Video {base_name}: stages 1-2 done in {time.time() - video_start_time:.1f} seconds.")
+
+    if stages == "extract":
+        return
 
     # ---- choose the best events across the session (or per video) ----
     per_video = []
