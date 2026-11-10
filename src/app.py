@@ -341,10 +341,29 @@ class App:
         self._open_picker(self.snapshot())
 
 
+def run_selftest(out_path):
+    """`FootballHighlights.exe --selftest out.txt`: imports everything the window and the worker need (for checking a packaged build)."""
+    lines = []
+    for name in ("torch", "cv2", "numpy", "pandas", "sklearn.cluster", "scipy.signal", "av", "PIL.ImageTk", "tkinter", "tkinterdnd2", "ultralytics",
+                 "team_color_picker", "main", "tactical_analyzer", "highlight_generator"):
+        try:
+            __import__(name)
+            lines.append(f"ok    {name}")
+        except Exception as e:   # report, never crash: the point is to list every missing piece
+            lines.append(f"FAIL  {name}: {e!r}")
+    from app_paths import APP_ROOT, BUNDLE_ROOT, DETECTOR_VERSION
+    lines.append(f"APP_ROOT={APP_ROOT} BUNDLE_ROOT={BUNDLE_ROOT} model_exists={os.path.exists(os.path.join(BUNDLE_ROOT, 'models', f'match_detector_{DETECTOR_VERSION}.pt'))}")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def main():
     multiprocessing.freeze_support()
     if len(sys.argv) >= 3 and sys.argv[1] == "--worker":
         run_worker(sys.argv[2])
+        return
+    if len(sys.argv) >= 3 and sys.argv[1] == "--selftest":
+        run_selftest(sys.argv[2])
         return
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)   # sharp text on high-DPI screens
