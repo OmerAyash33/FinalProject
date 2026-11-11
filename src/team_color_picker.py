@@ -7,8 +7,10 @@ patch whose colour the pipeline measures. For each player:
     right click  (or O)   this is an opponent (optional, helps when the two shirts are similar)
     N / "next"            skip, show the next player
     B back, Z undo the last click, Enter = save and close
+At most event_params.PICKER_MAX_PER_COLOR (5) players can be clicked per colour, and once PICKER_AUTO_FINISH_TOTAL (7) players in total
+are clicked the window saves and closes by itself (the app then goes on to the processing stage). A new pick REPLACES the session's old one.
 The median of the clicked shirts becomes the reference colour of the session (team_colors.json); Stage 2 then calls every player whose shirt
-is closer to it than to the other colour "ours" - yellow, blue, red, anything. Ten clicks are plenty.
+is closer to it than to the other colour "ours" - yellow, blue, red, anything.
 
 Needs Stage 1 (the `<video>_data.csv`) of the videos, because the crops come from the detections.
 Usage from source:  .venv/Scripts/python.exe src/team_color_picker.py <session folder name | video file(s)>
@@ -28,7 +30,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 import event_params as P
-from team_colors import load_reference, save_reference
+from team_colors import save_reference
 
 BG, FG, PANEL, ACCENT = "#1b1b1b", "#eeeeee", "#262626", "#4be04b"
 FONT = ("Segoe UI", 12)
@@ -127,9 +129,8 @@ class PickerWindow:
         self.session = session
         self.cands = gather_candidates(video_csvs)
         self.all_colors = np.array([c["color"] for c in self.cands]) if self.cands else np.zeros((0, 3))
-        ref = load_reference(session)
-        self.ours = [tuple(c) for c in ref["ours"]] if ref else []
-        self.theirs = [tuple(c) for c in ref["theirs"]] if ref else []
+        self.ours, self.theirs = [], []   # a new pick replaces the saved one of the session (hard limits, see event_params.PICKER_*)
+        self.locked = False        # True once the auto-finish has been triggered: no more clicks
         self.history = []          # ("ours"/"theirs", colour) of the clicks of THIS run, for undo
         self.idx = 0
         self.saved = False
@@ -184,6 +185,8 @@ class PickerWindow:
         tk.Label(right, text="בחירת צבע החולצה שלנו", bg=PANEL, fg=FG, font=FONT_BIG).pack(anchor="e")
         for t in ("לחיצה שמאלית על שחקן: החולצה שלנו", "לחיצה ימנית על שחקן: קבוצה יריבה", "דלג לשחקן הבא: כפתור הבא"):
             tk.Label(right, text=t, bg=PANEL, fg="#c8c8c8", font=FONT, justify="right").pack(anchor="e", pady=1)
+        tk.Label(right, text=f"עד {P.PICKER_MAX_PER_COLOR} לכל צבע. אחרי {P.PICKER_AUTO_FINISH_TOTAL} בחירות ממשיכים אוטומטית", bg=PANEL, fg=ACCENT, font=FONT,
+                 justify="right").pack(anchor="e", pady=(4, 0))
         tk.Label(right, text="Keys: Y ours | O opponent | N next | B back | Z undo | Enter save", bg=PANEL, fg="#8a8a8a", font=("Segoe UI", 9)).pack(anchor="e", pady=(6, 10))
 
         self.sw_ours = self._row(right, "הצבע שלנו:", ACCENT)
@@ -191,8 +194,10 @@ class PickerWindow:
         self.captured = self._row(right, "נתפסים כשלנו:", FG, swatch=False)
 
         bt = dict(font=FONT, bd=0, padx=12, pady=7, cursor="hand2")
-        tk.Button(right, text="הקבוצה שלנו", bg="#2f7d2f", fg="white", command=lambda: self.pick("ours"), **bt).pack(fill="x", pady=(14, 3))
-        tk.Button(right, text="קבוצה יריבה", bg="#8a3a8a", fg="white", command=lambda: self.pick("theirs"), **bt).pack(fill="x", pady=3)
+        self.btn_ours = tk.Button(right, text="הקבוצה שלנו", bg="#2f7d2f", fg="white", command=lambda: self.pick("ours"), **bt)
+        self.btn_ours.pack(fill="x", pady=(14, 3))
+        self.btn_theirs = tk.Button(right, text="קבוצה יריבה", bg="#8a3a8a", fg="white", command=lambda: self.pick("theirs"), **bt)
+        self.btn_theirs.pack(fill="x", pady=3)
         tk.Button(right, text="הבא", bg="#3a3a3a", fg="white", command=self.next, **bt).pack(fill="x", pady=3)
         tk.Button(right, text="חזרה", bg="#3a3a3a", fg="white", command=self.back, **bt).pack(fill="x", pady=3)
         tk.Button(right, text="בטל לחיצה אחרונה", bg="#3a3a3a", fg="white", command=self.undo, **bt).pack(fill="x", pady=3)
@@ -258,7 +263,10 @@ class PickerWindow:
             if lst:
                 med = np.median(np.array(lst), axis=0)
                 canvas.create_rectangle(0, 0, 54, 22, fill=_hex(med), outline="")
-            label.config(text=str(len(lst)))
+            label.config(text=f"{len(lst)}/{P.PICKER_MAX_PER_COLOR}")
+        for btn, lst, bg in ((self.btn_ours, self.ours, "#2f7d2f"), (self.btn_theirs, self.theirs, "#8a3a8a")):
+            full = len(lst) >= P.PICKER_MAX_PER_COLOR or self.locked
+            btn.config(state="disabled" if full else "normal", bg="#4a4a4a" if full else bg)
         _, cap = self.captured
         if self.ours and len(self.all_colors):
             from team_utils import TeamModel
@@ -270,13 +278,25 @@ class PickerWindow:
 
     # ---- actions
     def pick(self, who):
-        if not self.cands or self.idx >= len(self.cands):
+        if self.locked or not self.cands or self.idx >= len(self.cands):
+            return
+        lst = self.ours if who == "ours" else self.theirs
+        if len(lst) >= P.PICKER_MAX_PER_COLOR:   # HARD limit per colour: the click is refused and the player stays on screen
+            self.status.config(text=f"כבר נבחרו {P.PICKER_MAX_PER_COLOR} שחקנים לצבע הזה. אפשר לעבור לשחקן הבא או לסיים")
             return
         colour = self.cands[self.idx]["color"]
-        (self.ours if who == "ours" else self.theirs).append(colour)
+        lst.append(colour)
         self.history.append((who, colour))
         self.status.config(text="")
         self.idx += 1
+        if len(self.ours) + len(self.theirs) >= P.PICKER_AUTO_FINISH_TOTAL:   # enough: save and go on to the processing stage by itself
+            self.locked = True
+            self.status.config(text=f"נבחרו {len(self.ours) + len(self.theirs)} שחקנים. שומר וממשיך לעיבוד")
+            self.show()
+            self.master.after(900, self.finish)
+            return
+        if len(self.ours) >= P.PICKER_MAX_PER_COLOR and not self.theirs:
+            self.status.config(text=f"נבחרו {P.PICKER_MAX_PER_COLOR} שחקנים שלנו. אפשר לסמן גם יריבים (עד {P.PICKER_AUTO_FINISH_TOTAL - P.PICKER_MAX_PER_COLOR}) או ללחוץ סיום")
         self.show()
 
     def next(self):
@@ -290,7 +310,7 @@ class PickerWindow:
             self.show()
 
     def undo(self):
-        if not self.history:
+        if self.locked or not self.history:
             return
         who, colour = self.history.pop()
         lst = self.ours if who == "ours" else self.theirs
@@ -303,9 +323,12 @@ class PickerWindow:
             self.ours.clear()
             self.theirs.clear()
             self.history.clear()
+            self.locked = False
             self.show()
 
     def finish(self):
+        if self.saved:   # the auto-finish timer and a click on "save" must not both run
+            return
         if not self.ours:
             self.status.config(text="עוד לא בחרת שחקן שלנו. לחץ לחיצה שמאלית על שחקן בצבע שלנו.")
             return
@@ -355,7 +378,7 @@ if __name__ == "__main__":
         sys.exit("no videos found")
     out_root = os.path.join(APP_ROOT, "pipeline_outputs")
     ses = os.path.basename(os.path.dirname(os.path.abspath(vids[0])))
-    # a few videos are enough: ten players come out of one
+    # a few videos are enough: seven players come out of one
     step = max(1, len(vids) // 4)
     print("session:", ses, "| videos used:", len(vids[::step]))
     print("saved" if pick_team_colors(ses, [(v, _csv_for(v, out_root)) for v in vids[::step]]) else "nothing saved")

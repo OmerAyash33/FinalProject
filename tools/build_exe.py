@@ -26,7 +26,8 @@ README = """Football highlights
 1. Double-click FootballHighlights.exe  (keep this whole folder together; the first start takes ~20 seconds).
 2. Drag your videos into the list (or press "add videos"), check the session name, press "start".
 3. When the extraction is done a window shows players one at a time: left-click a player of YOUR team
-   (right-click = opponent, N = skip to the next player). About ten clicks are enough, then "save".
+   (right-click = opponent, N = skip to the next player). At most 5 players per colour; after 7 clicks in total
+   the window closes by itself and the processing goes on.
 4. The highlight videos appear in the output folder (All_Matches_Master_Highlights.mp4 = everything in one reel).
 
 - The first step (extraction) is the slow one: a few minutes per 5-minute video on an NVIDIA GPU.

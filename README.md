@@ -29,7 +29,7 @@ see `src/config.py`). Footage, extracted data and rendered videos are NOT in the
 ## The app (drop videos in, get highlights)
 
 `src/app.py` is a desktop window: drag videos in, press start. It extracts the detections, then asks you to click a few players of
-YOUR team (`src/team_color_picker.py`: left click = ours, right click = opponent, N = next player; the median of the clicked shirts
+YOUR team (`src/team_color_picker.py`: left click = ours, right click = opponent, N = next player; at most 5 per colour and after 7 clicks it continues by itself; the median of the clicked shirts
 becomes the reference colour of the session, stored in `team_colors.json`, so any colour works - yellow, blue, red), then renders the
 highlight videos. Without a picked colour the old light/dark rule is used (`event_params.OUR_SHADE_*`).
 

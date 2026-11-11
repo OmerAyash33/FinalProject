@@ -36,6 +36,10 @@ OUR_SHADE_BY_SESSION = {
 # raw BGR is dominated by brightness, so the same orange vest in sun and in shade landed in different teams.
 TEAM_MIN_BOX_HEIGHT_PX = 40
 TEAM_FEATURE_V_WEIGHT = 0.5
+# Team colour picker (src/team_color_picker.py): a HARD limit of this many clicked players per colour (ours / opponents) ...
+PICKER_MAX_PER_COLOR = 5
+# ... and as soon as this many players in total have been clicked, the picker saves and closes by itself, so the app goes on to the processing stage.
+PICKER_AUTO_FINISH_TOTAL = 7
 
 # ===========================================================================
 # 1. BALL TRACK CLEANING AND SPEED
