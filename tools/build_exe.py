@@ -24,14 +24,17 @@ NAME = "FootballHighlights"
 README = """Football highlights
 ===================
 1. Double-click FootballHighlights.exe  (keep this whole folder together; the first start takes ~20 seconds).
-2. Drag your videos into the list (or press "add videos"), check the session name, press "start".
-3. When the extraction is done a window shows players one at a time: left-click a player of YOUR team
-   (right-click = opponent, N = skip to the next player). At most 5 players per colour; after 7 clicks in total
+2. Step 1 - drag your videos into the list (or press "Add videos").
+3. Step 2 - check the session name and the output folder.
+4. Step 3 - leave "pick our team's shirt colour (recommended)" ticked.
+5. Step 4 - press "Start processing". When the extraction is done a window shows players one at a time: left-click a player of YOUR team
+   (right-click = opponent, optional; N = skip to the next player). At most 5 players per colour; after 7 clicks in total
    the window closes by itself and the processing goes on.
-4. The highlight videos appear in the output folder (All_Matches_Master_Highlights.mp4 = everything in one reel).
+6. Step 5 - when the run is finished, click the links to open the highlight reel (All_Matches_Master_Highlights.mp4 = everything in one reel)
+   or the results folder.
 
-- The first step (extraction) is the slow one: a few minutes per 5-minute video on an NVIDIA GPU.
-- Colours are remembered per session name in team_colors.json (next to the exe). Delete the entry, or press "pick team colour", to change it.
+- The extraction is the slow stage: a few minutes per 5-minute video on an NVIDIA GPU.
+- Colours are remembered per session name in team_colors.json (next to the exe). Delete the entry, or press "Pick shirt colour now", to change it.
 - Each run writes a log to <output folder>/logs/. Send it along if something fails.
 """
 

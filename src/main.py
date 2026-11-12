@@ -55,6 +55,7 @@ import event_params as P
 from audio_utils import audio_path_for, extract_audio_features
 from config import DETECTOR_VERSION, LIVE_PREVIEW
 from event_scoring import select_events
+from links import print_result_links
 from logging_utils import log
 from video_processor import VideoProcessor
 from tactical_analyzer import DataAnalyzer
@@ -175,6 +176,7 @@ def process_session(input_dir, output_dir, video_files=None, stages="all"):
 
     master_output = os.path.join(output_dir, "All_Matches_Master_Highlights.mp4")
     concatenate_highlights(generated_highlights, master_output)
+    print_result_links(output_dir, master_output, generated_highlights if len(generated_highlights) > 1 else ())   # clickable links, last thing printed
 
 
 def main():

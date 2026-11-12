@@ -1,20 +1,27 @@
 """
 Football highlights - the desktop app (this is the program that tools/build_exe.py packages into FootballHighlights.exe).
 
-Put videos in (drag them onto the list, or "add videos"), press start. The app
-  1. extracts the detections of every video (the slow part, a few minutes per video on a GPU),
-  2. asks you to click a few players of YOUR team so it knows your shirt colour (skipped when the session already has one),
-  3. finds dribbles / passes / shots, picks the best 3 of each kind and renders the highlight videos.
-Results: <output folder>/<session>_v2/  (All_Matches_Master_Highlights.mp4 = everything in one reel).
+The window is five numbered steps:
+  1. Add your videos (drag them onto the list, or "Add videos").
+  2. Name the session and choose the output folder.
+  3. Choose whether to pick your team's shirt colour (recommended).
+  4. Press "Start processing". The app then runs, in order:
+       stage 1  extract the detections of every video (the slow part, a few minutes per video on a GPU),
+       stage 2  ask you to click a few players of YOUR team so it knows your shirt colour (skipped when not wanted / already known),
+       stage 3  find dribbles / passes / shots, pick the best 3 of each kind and render the highlight videos.
+  5. Results: clickable links to the highlight reel and the results folder appear in the window when the run is finished.
+Results are written to <output folder>/<session>_v2/  (All_Matches_Master_Highlights.mp4 = everything in one reel).
 
-The heavy work runs in a second process of this same program ("--worker"), so the window never freezes and "cancel" really stops it.
+The heavy work runs in a second process of this same program ("--worker"), so the window never freezes and "Cancel" really stops it.
 Run from source:  .venv/Scripts/python.exe src/app.py
 """
 import ctypes
+import glob
 import json
 import multiprocessing
 import os
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -23,6 +30,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VIDEO_EXT = (".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mts")
+MASTER_NAME = "All_Matches_Master_Highlights.mp4"
+PATH_IN_LINE = re.compile(r"[A-Za-z]:[\\/].*$")   # an absolute Windows path at the end of a log line -> shown as a clickable link
 
 
 # ------------------------------------------------------------------------------------------------ worker process
@@ -31,6 +40,7 @@ def run_worker(job_path):
     with open(job_path, "r", encoding="utf-8") as f:
         job = json.load(f)
     os.environ["FOOTBALL_LIVE_PREVIEW"] = "0"      # no preview window inside the app
+    os.environ["FOOTBALL_IN_APP"] = "1"            # the app makes the links itself (links.print_result_links prints plain paths only)
     # Everything the pipeline prints goes into a log file that the window follows (a windowed exe has no usable stdout, and the file stays
     # as a record of the run).
     os.makedirs(os.path.dirname(job["log"]), exist_ok=True)
@@ -44,7 +54,9 @@ def run_worker(job_path):
 
 # ------------------------------------------------------------------------------------------------ the window
 BG, FG, PANEL = "#1b1b1b", "#eeeeee", "#262626"
+ACCENT, LINK, MUTED, WARN = "#4be04b", "#5ab0ff", "#9a9a9a", "#ffd060"
 FONT = ("Segoe UI", 11)
+FONT_SMALL = ("Segoe UI", 10)
 
 
 class App:
@@ -60,10 +72,10 @@ class App:
             self.root = tk.Tk()
             self.dnd = None
         r = self.root
-        r.title("Football highlights")
+        r.title("Football chest-cam highlights")
         r.configure(bg=BG)
-        r.geometry("860x700")
-        r.minsize(760, 620)
+        r.geometry(f"900x{min(1000, r.winfo_screenheight() - 80)}")
+        r.minsize(820, 640)
         from app_paths import APP_ROOT
         self.app_root = APP_ROOT
         self.videos = []
@@ -71,6 +83,7 @@ class App:
         self.worker = None
         self.cancelled = False
         self.msgs = queue.Queue()
+        self.link_count = 0
         self.session_var = tk.StringVar()
         self.out_var = tk.StringVar(value=os.path.join(APP_ROOT, "output"))
         self.pick_var = tk.BooleanVar(value=True)
@@ -79,73 +92,150 @@ class App:
         r.after(150, self._pump)
 
     # ---- layout
+    def _step(self, number, title, side="top", expand=False):
+        """A numbered panel: 'Step N - title' header, returns (panel, the empty body frame)."""
+        tk = self.tk
+        outer = tk.Frame(self.root, bg=PANEL)
+        outer.pack(side=side, fill="both" if expand else "x", expand=expand, padx=14, pady=5)
+        head = tk.Frame(outer, bg=PANEL)
+        head.pack(fill="x", padx=10, pady=(8, 2))
+        tk.Label(head, text=f"Step {number}", bg=ACCENT, fg="#0b2a0b", font=("Segoe UI", 10, "bold"), padx=8, pady=1).pack(side="left")
+        tk.Label(head, text=title, bg=PANEL, fg=FG, font=("Segoe UI", 12, "bold")).pack(side="left", padx=10)
+        body = tk.Frame(outer, bg=PANEL)
+        body.pack(fill="both" if expand else "x", expand=expand, padx=10, pady=(2, 10))
+        return outer, body
+
+    def _button(self, parent, text, command, bg="#3a3a3a", **kw):
+        opts = dict(bg=bg, fg="white", bd=0, font=FONT, padx=12, pady=5, cursor="hand2", activebackground=bg, activeforeground="white")
+        opts.update(kw)
+        return self.tk.Button(parent, text=text, command=command, **opts)
+
     def _build(self):
         tk, ttk, r = self.tk, self.ttk, self.root
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("TProgressbar", troughcolor=PANEL, background="#4be04b", bordercolor=BG, lightcolor="#4be04b", darkcolor="#4be04b")
-        top = tk.Frame(r, bg=BG)
-        top.pack(fill="x", padx=14, pady=(12, 4))
-        tk.Label(top, text="סרטוני כדורגל מצלמת חזה: הוספת סרטונים וקבלת קטעים מוקדשים", bg=BG, fg=FG, font=("Segoe UI", 14, "bold")).pack(anchor="e")
+        style.configure("TProgressbar", troughcolor=PANEL, background=ACCENT, bordercolor=BG, lightcolor=ACCENT, darkcolor=ACCENT)
+        head = tk.Frame(r, bg=BG)
+        head.pack(fill="x", padx=14, pady=(12, 4))
+        tk.Label(head, text="Football chest-cam highlights", bg=BG, fg=FG, font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        tk.Label(head, text="Add your match videos and get the best dribbles, passes and shots as highlight clips.", bg=BG, fg=MUTED,
+                 font=FONT_SMALL).pack(anchor="w")
 
-        box = tk.Frame(r, bg=PANEL)
-        box.pack(fill="both", padx=14, pady=6)
-        row = tk.Frame(box, bg=PANEL)
-        row.pack(fill="both", padx=10, pady=10)
-        side = tk.Frame(row, bg=PANEL)
-        side.pack(side="right", padx=(10, 0), fill="y")
-        for text, cmd in (("הוסף סרטונים", self.add_files), ("הוסף תיקייה", self.add_folder), ("הסר מסומנים", self.remove_selected), ("נקה הכל", self.clear)):
-            tk.Button(side, text=text, command=cmd, bg="#3a3a3a", fg="white", bd=0, font=FONT, padx=12, pady=5, cursor="hand2").pack(fill="x", pady=2)
+        # Step 1 - videos
+        _, body = self._step(1, "Add your videos")
+        row = tk.Frame(body, bg=PANEL)
+        row.pack(fill="x")
         listf = tk.Frame(row, bg=PANEL)
-        listf.pack(side="left", fill="both", expand=True)
+        listf.pack(fill="x", expand=True)
         sb = tk.Scrollbar(listf)
         sb.pack(side="right", fill="y")
-        self.listbox = tk.Listbox(listf, height=8, bg="#111111", fg=FG, selectmode="extended", font=("Segoe UI", 10), yscrollcommand=sb.set,
+        self.listbox = tk.Listbox(listf, height=4, bg="#111111", fg=FG, selectmode="extended", font=FONT_SMALL, yscrollcommand=sb.set,
                                   highlightthickness=0, bd=0, activestyle="none")
         self.listbox.pack(side="left", fill="both", expand=True)
         sb.config(command=self.listbox.yview)
-        hint = "אפשר גם לגרור סרטונים לרשימה" if self.dnd else ""
-        tk.Label(box, text=hint, bg=PANEL, fg="#9a9a9a", font=("Segoe UI", 10)).pack(anchor="e", padx=10, pady=(0, 6))
+        side = tk.Frame(body, bg=PANEL)
+        side.pack(fill="x", pady=(6, 0))
+        for text, cmd in (("Add videos", self.add_files), ("Add folder", self.add_folder), ("Remove selected", self.remove_selected), ("Clear all", self.clear)):
+            self._button(side, text, cmd, pady=3).pack(side="left", padx=(0, 6))
         if self.dnd:
+            tk.Label(side, text="You can also drag videos into the list.", bg=PANEL, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=8)
             self.listbox.drop_target_register(self.dnd)
             self.listbox.dnd_bind("<<Drop>>", self._on_drop)
 
-        opt = tk.Frame(r, bg=BG)
-        opt.pack(fill="x", padx=14, pady=4)
-        self._field(opt, "שם הסשן:", self.session_var)
-        out = self._field(opt, "תיקיית תוצאות:", self.out_var)
-        tk.Button(out, text="בחר", command=self.browse_out, bg="#3a3a3a", fg="white", bd=0, font=FONT, padx=10, cursor="hand2").pack(side="left", padx=(0, 6))
-        tk.Checkbutton(opt, text="לבחור צבע חולצה של הקבוצה שלנו (מומלץ)", variable=self.pick_var, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG,
-                       activeforeground=FG, font=FONT).pack(anchor="e", pady=(4, 0))
+        # Step 2 - session + output
+        _, body = self._step(2, "Name the session and choose where the results go")
+        self._field(body, "Session name:", self.session_var)
+        out = self._field(body, "Output folder:", self.out_var)
+        self._button(out, "Browse...", self.browse_out, padx=10, pady=2).pack(side="left", padx=(8, 0))
 
-        btns = tk.Frame(r, bg=BG)
-        btns.pack(fill="x", padx=14, pady=8)
-        self.start_btn = tk.Button(btns, text="התחל עיבוד", command=self.start, bg="#2f7d2f", fg="white", bd=0, font=("Segoe UI", 12, "bold"), padx=24, pady=8, cursor="hand2")
-        self.start_btn.pack(side="right")
-        self.cancel_btn = tk.Button(btns, text="ביטול", command=self.cancel, bg="#8a3a3a", fg="white", bd=0, font=FONT, padx=14, pady=8, state="disabled", cursor="hand2")
-        self.cancel_btn.pack(side="right", padx=8)
-        tk.Button(btns, text="בחר צבע חולצה", command=self.pick_colors_now, bg="#3a3a3a", fg="white", bd=0, font=FONT, padx=14, pady=8, cursor="hand2").pack(side="right")
-        tk.Button(btns, text="פתח תיקיית תוצאות", command=self.open_results, bg="#1f5fbf", fg="white", bd=0, font=FONT, padx=14, pady=8, cursor="hand2").pack(side="left")
+        # Step 3 - shirt colour
+        _, body = self._step(3, "Tell the app which shirt colour is yours")
+        line = tk.Frame(body, bg=PANEL)
+        line.pack(fill="x")
+        tk.Checkbutton(line, text="After the extraction, pick our team's shirt colour (recommended)", variable=self.pick_var, bg=PANEL, fg=FG,
+                       selectcolor="#111111", activebackground=PANEL, activeforeground=FG, font=FONT).pack(side="left")
+        self._button(line, "Pick shirt colour now", self.pick_colors_now).pack(side="right")
+        tk.Label(body, text="You click a few players of your team and the app learns the colour. Without it, the app guesses from light / dark shirts.", bg=PANEL, fg=MUTED, font=FONT_SMALL, justify="left", wraplength=800
+                 ).pack(anchor="w", pady=(4, 0))
 
-        self.progress = ttk.Progressbar(r, mode="indeterminate")
-        self.progress.pack(fill="x", padx=14, pady=(2, 2))
-        tk.Label(r, textvariable=self.status_var, bg=BG, fg="#ffd060", font=FONT).pack(anchor="e", padx=14)
-        logf = tk.Frame(r, bg=BG)
-        logf.pack(fill="both", expand=True, padx=14, pady=(4, 12))
+        # Step 5 - results (links)
+        _, body = self._step(5, "Open your results", side="bottom")
+        self.results_box = tk.Frame(body, bg=PANEL)
+        self.results_box.pack(fill="x")
+        self._results_placeholder()
+        self._button(body, "Open results folder", self.open_results, bg="#1f5fbf").pack(anchor="w", pady=(8, 0))
+
+        # Step 4 - start + progress + log
+        _, body = self._step(4, "Start processing", expand=True)
+        btns = tk.Frame(body, bg=PANEL)
+        btns.pack(fill="x")
+        self.start_btn = self._button(btns, "Start processing", self.start, bg="#2f7d2f", font=("Segoe UI", 12, "bold"), padx=24, pady=8)
+        self.start_btn.pack(side="left")
+        self.cancel_btn = self._button(btns, "Cancel", self.cancel, bg="#8a3a3a", pady=8, state="disabled")
+        self.cancel_btn.pack(side="left", padx=8)
+        tk.Label(btns, textvariable=self.status_var, bg=PANEL, fg=WARN, font=FONT, anchor="w", justify="left", wraplength=470).pack(side="left", padx=12, fill="x", expand=True)
+        self.progress = ttk.Progressbar(body, mode="indeterminate")
+        self.progress.pack(fill="x", pady=(8, 4))
+        logf = tk.Frame(body, bg=PANEL)
+        logf.pack(fill="both", expand=True)
         lsb = tk.Scrollbar(logf)
         lsb.pack(side="right", fill="y")
-        self.log_text = tk.Text(logf, height=10, bg="#0f0f0f", fg="#c8c8c8", font=("Consolas", 9), wrap="none", yscrollcommand=lsb.set, bd=0, state="disabled")
+        self.log_text = tk.Text(logf, height=6, bg="#0f0f0f", fg="#c8c8c8", font=("Consolas", 9), wrap="none", yscrollcommand=lsb.set, bd=0, state="disabled")
         self.log_text.pack(side="left", fill="both", expand=True)
         lsb.config(command=self.log_text.yview)
+        self.log_text.tag_config("link", foreground=LINK, underline=True)
+        self.log_text.tag_bind("link", "<Enter>", lambda e: self.log_text.config(cursor="hand2"))
+        self.log_text.tag_bind("link", "<Leave>", lambda e: self.log_text.config(cursor=""))
 
     def _field(self, parent, label, var):
         tk = self.tk
-        f = tk.Frame(parent, bg=BG)
+        f = tk.Frame(parent, bg=PANEL)
         f.pack(fill="x", pady=2)
-        tk.Label(f, text=label, bg=BG, fg=FG, font=FONT, width=14, anchor="e").pack(side="right")
-        e = tk.Entry(f, textvariable=var, bg="#111111", fg=FG, insertbackground=FG, bd=0, font=("Segoe UI", 10))
-        e.pack(side="right", fill="x", expand=True, padx=8, ipady=4)
+        tk.Label(f, text=label, bg=PANEL, fg=FG, font=FONT, width=14, anchor="w").pack(side="left")
+        e = tk.Entry(f, textvariable=var, bg="#111111", fg=FG, insertbackground=FG, bd=0, font=FONT_SMALL)
+        e.pack(side="left", fill="x", expand=True, ipady=4)
         return f
+
+    # ---- results: clickable links
+    def _results_placeholder(self):
+        for w in self.results_box.winfo_children():
+            w.destroy()
+        self.tk.Label(self.results_box, text="When the run is finished, the links to your highlight videos appear here.", bg=PANEL, fg=MUTED,
+                      font=FONT_SMALL).pack(anchor="w")
+
+    def _link_row(self, parent, label, path, text=None):
+        """`label` and below it a clickable, underlined link (its text is the full path unless `text` is given)."""
+        tk = self.tk
+        f = tk.Frame(parent, bg=PANEL)
+        f.pack(fill="x", pady=2)
+        tk.Label(f, text=label, bg=PANEL, fg=FG, font=("Segoe UI", 10, "bold"), anchor="w").pack(anchor="w")
+        link = tk.Label(f, text=text or path, bg=PANEL, fg=LINK, font=("Segoe UI", 10, "underline"), cursor="hand2", anchor="w", justify="left", wraplength=820)
+        link.pack(anchor="w")
+        link.bind("<Button-1>", lambda e, p=path: self.open_link(p))
+        return link
+
+    def show_results(self, out):
+        """Step 5: one clickable row per result that exists."""
+        for w in self.results_box.winfo_children():
+            w.destroy()
+        master = os.path.join(out, MASTER_NAME)
+        if os.path.exists(master):
+            self._link_row(self.results_box, "Highlight reel (all videos in one):", master)
+        self._link_row(self.results_box, "Results folder (every file of this run):", out)
+        per_video = [p for p in sorted(glob.glob(os.path.join(out, "*_highlights.mp4"))) if os.path.basename(p).lower() != MASTER_NAME.lower()]
+        if len(per_video) > 1:   # with one video the reel above IS that video's highlights
+            self.tk.Label(self.results_box, text="Highlights of each video:", bg=PANEL, fg=FG, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(4, 0))
+            for p in per_video[:6]:
+                link = self.tk.Label(self.results_box, text=os.path.basename(p), bg=PANEL, fg=LINK, font=("Segoe UI", 10, "underline"), cursor="hand2")
+                link.pack(anchor="w")
+                link.bind("<Button-1>", lambda e, path=p: self.open_link(path))
+
+    def open_link(self, path):
+        from links import open_path
+        try:
+            open_path(path)
+        except OSError as e:
+            self.set_status(f"Could not open {path}: {e}")
 
     # ---- video list
     def _add(self, paths):
@@ -204,7 +294,7 @@ class App:
     def open_results(self):
         d = self.out_dir()
         os.makedirs(d, exist_ok=True)
-        os.startfile(d)
+        self.open_link(d)
 
     def log(self, text):
         self.msgs.put(("log", text))
@@ -212,15 +302,31 @@ class App:
     def set_status(self, text):
         self.msgs.put(("status", text))
 
+    def _insert_log(self, line):
+        """Append one line to the log; an existing absolute path at the end of the line becomes a clickable link."""
+        t = self.log_text
+        line = line.rstrip("\n")
+        t.config(state="normal")
+        m = PATH_IN_LINE.search(line)
+        path = m.group(0).strip() if m else None
+        if path and os.path.exists(path):
+            self.link_count += 1
+            tag = f"link{self.link_count}"
+            t.insert("end", line[:m.start()])
+            t.insert("end", path, ("link", tag))
+            t.tag_bind(tag, "<Button-1>", lambda e, p=path: self.open_link(p))
+            t.insert("end", "\n")
+        else:
+            t.insert("end", line + "\n")
+        t.see("end")
+        t.config(state="disabled")
+
     def _pump(self):
         try:
             while True:
                 kind, val = self.msgs.get_nowait()
                 if kind == "log":
-                    self.log_text.config(state="normal")
-                    self.log_text.insert("end", val.rstrip("\n") + "\n")
-                    self.log_text.see("end")
-                    self.log_text.config(state="disabled")
+                    self._insert_log(val)
                 elif kind == "status":
                     self.status_var.set(val)
                 elif kind == "busy":
@@ -237,7 +343,7 @@ class App:
         self.root.after(150, self._pump)
 
     # ---- running
-    def _spawn(self, stage, cfg):
+    def _spawn(self, stage, cfg, stage_no, stage_total):
         """Run one worker stage; stream its output into the log. Returns True when it finished cleanly."""
         log_path = os.path.join(cfg["out_root"], "logs", f"{cfg['session']}_{stage}.log")
         job = {"stage": stage, "session": cfg["session"], "out_root": cfg["out_root"], "videos": cfg["videos"], "log": log_path}
@@ -245,12 +351,13 @@ class App:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(job, f)
         cmd = [sys.executable, "--worker", job_path] if getattr(sys, "frozen", False) else [sys.executable, os.path.abspath(__file__), "--worker", job_path]
-        env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", FOOTBALL_LIVE_PREVIEW="0")
+        env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", FOOTBALL_LIVE_PREVIEW="0", FOOTBALL_IN_APP="1")
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         open(log_path, "w").close()
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, creationflags=flags, cwd=self.app_root)
         n_done = 0
+        what = "extracting the detections" if stage == "extract" else "finding events and rendering the highlights"
         with open(log_path, "r", encoding="utf-8", errors="replace") as logf:
             while True:
                 alive = self.proc.poll() is None
@@ -258,9 +365,9 @@ class App:
                     self.log(line)
                     if "Processing Video:" in line:
                         n_done += 1
-                        self.set_status(f"{'חילוץ נתונים' if stage == 'extract' else 'ניתוח'}: סרטון {n_done} מתוך {len(cfg['videos'])}")
+                        self.set_status(f"Stage {stage_no} of {stage_total}: {what} - video {n_done} of {len(cfg['videos'])}")
                     elif "Creating Master Highlight Reel" in line:
-                        self.set_status("מרכיב את הסרטון המסכם")
+                        self.set_status(f"Stage {stage_no} of {stage_total}: putting the highlight reel together")
                 if not alive:
                     break
                 time.sleep(0.3)
@@ -273,33 +380,38 @@ class App:
 
     def start(self):
         if not self.videos:
-            self.set_status("הוסף קודם סרטונים")
+            self.set_status("Step 1 is missing: add at least one video first")
             return
         self.cancelled = False
+        self.msgs.put(("call", self._results_placeholder))
         self.msgs.put(("busy", True))
         self.worker = threading.Thread(target=self._run_all, args=(self.snapshot(),), daemon=True)
         self.worker.start()
 
     def _run_all(self, cfg):
         t0 = time.time()
+        out = self.out_dir(cfg)
         try:
-            self.set_status("חילוץ נתונים מהסרטונים (השלב הארוך)")
-            if not self._spawn("extract", cfg):
-                self.set_status("בוטל" if self.cancelled else "החילוץ נכשל, ראה את היומן")
-                return
             from team_colors import load_reference
-            if cfg["pick"] and load_reference(cfg["session"]) is None:
-                self.set_status("בחר את צבע החולצה של הקבוצה שלך")
-                self._ask_colors_blocking(cfg)
-            self.set_status("מנתח אירועים ומרכיב סרטונים")
-            if not self._spawn("analyze", cfg):
-                self.set_status("בוטל" if self.cancelled else "הניתוח נכשל, ראה את היומן")
+            will_pick = cfg["pick"] and load_reference(cfg["session"]) is None
+            total = 3 if will_pick else 2
+            self.set_status(f"Stage 1 of {total}: extracting the detections (the long part)")
+            if not self._spawn("extract", cfg, 1, total):
+                self.set_status("Cancelled" if self.cancelled else "The extraction failed - see the log above")
                 return
-            self.set_status(f"הסתיים ב-{(time.time() - t0) / 60:.1f} דקות. התוצאות בתיקייה למטה")
-            self.log(f"DONE. Results: {self.out_dir(cfg)}")
+            if will_pick:
+                self.set_status(f"Stage 2 of {total}: pick your team's shirt colour in the window that opened")
+                self._ask_colors_blocking(cfg)
+            self.set_status(f"Stage {total} of {total}: finding events and rendering the highlights")
+            if not self._spawn("analyze", cfg, total, total):
+                self.set_status("Cancelled" if self.cancelled else "The analysis failed - see the log above")
+                return
+            self.set_status(f"Finished in {(time.time() - t0) / 60:.1f} minutes - click a link in Step 5 to open your results")
+            self.log(f"Finished in {(time.time() - t0) / 60:.1f} minutes. The links above (and in Step 5) open your results.")
+            self.msgs.put(("call", lambda: self.show_results(out)))
         except Exception as e:   # never let the thread die silently
             self.log(f"ERROR: {e!r}")
-            self.set_status("שגיאה, ראה את היומן")
+            self.set_status("Something went wrong - see the log above")
         finally:
             self.msgs.put(("busy", False))
 
@@ -307,7 +419,7 @@ class App:
         self.cancelled = True
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
-        self.set_status("מבטל...")
+        self.set_status("Cancelling...")
 
     # ---- team colour
     def _csv_pairs(self, cfg):
@@ -329,14 +441,14 @@ class App:
         import team_color_picker
         pairs = [(v, c) for v, c in self._csv_pairs(cfg) if os.path.exists(c)]
         if not pairs:
-            self.set_status("אין עדיין נתונים שחולצו: התחל עיבוד קודם")
+            self.set_status("No extracted data yet - press Start processing first")
             return
-        step = max(1, len(pairs) // 4)   # a few videos are plenty: ten players come out of one
+        step = max(1, len(pairs) // 4)   # a few videos are plenty: seven players come out of one
         team_color_picker.pick_team_colors(cfg["session"], pairs[::step], parent=self.root)
 
     def pick_colors_now(self):
         if not self.videos:
-            self.set_status("הוסף קודם סרטונים")
+            self.set_status("Step 1 is missing: add at least one video first")
             return
         self._open_picker(self.snapshot())
 
@@ -345,7 +457,7 @@ def run_selftest(out_path):
     """`FootballHighlights.exe --selftest out.txt`: imports everything the window and the worker need (for checking a packaged build)."""
     lines = []
     for name in ("torch", "cv2", "numpy", "pandas", "sklearn.cluster", "scipy.signal", "av", "PIL.ImageTk", "tkinter", "tkinterdnd2", "ultralytics",
-                 "team_color_picker", "main", "tactical_analyzer", "highlight_generator"):
+                 "team_color_picker", "main", "tactical_analyzer", "highlight_generator", "links"):
         try:
             __import__(name)
             lines.append(f"ok    {name}")

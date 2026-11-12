@@ -182,29 +182,30 @@ class PickerWindow:
 
         right = tk.Frame(m, bg=PANEL, padx=14, pady=12)
         right.pack(side="left", fill="y", padx=(0, 10), pady=10)
-        tk.Label(right, text="בחירת צבע החולצה שלנו", bg=PANEL, fg=FG, font=FONT_BIG).pack(anchor="e")
-        for t in ("לחיצה שמאלית על שחקן: החולצה שלנו", "לחיצה ימנית על שחקן: קבוצה יריבה", "דלג לשחקן הבא: כפתור הבא"):
-            tk.Label(right, text=t, bg=PANEL, fg="#c8c8c8", font=FONT, justify="right").pack(anchor="e", pady=1)
-        tk.Label(right, text=f"עד {P.PICKER_MAX_PER_COLOR} לכל צבע. אחרי {P.PICKER_AUTO_FINISH_TOTAL} בחירות ממשיכים אוטומטית", bg=PANEL, fg=ACCENT, font=FONT,
-                 justify="right").pack(anchor="e", pady=(4, 0))
-        tk.Label(right, text="Keys: Y ours | O opponent | N next | B back | Z undo | Enter save", bg=PANEL, fg="#8a8a8a", font=("Segoe UI", 9)).pack(anchor="e", pady=(6, 10))
+        tk.Label(right, text="Pick our team's shirt colour", bg=PANEL, fg=FG, font=FONT_BIG).pack(anchor="w")
+        for t in ("1. Left-click a player wearing OUR shirt colour", "2. Right-click a player of the opponents (optional)",
+                  "3. Press Next (N) to skip a player you cannot judge"):
+            tk.Label(right, text=t, bg=PANEL, fg="#c8c8c8", font=FONT, justify="left").pack(anchor="w", pady=1)
+        tk.Label(right, text=f"At most {P.PICKER_MAX_PER_COLOR} players per colour. After {P.PICKER_AUTO_FINISH_TOTAL} picks in total the window saves "
+                             f"and the processing continues by itself.", bg=PANEL, fg=ACCENT, font=FONT, justify="left", wraplength=330).pack(anchor="w", pady=(6, 0))
+        tk.Label(right, text="Keys: Y ours | O opponent | N next | B back | Z undo | Enter save", bg=PANEL, fg="#8a8a8a", font=("Segoe UI", 9)).pack(anchor="w", pady=(6, 10))
 
-        self.sw_ours = self._row(right, "הצבע שלנו:", ACCENT)
-        self.sw_theirs = self._row(right, "הצבע היריב:", "#ff60ff")
-        self.captured = self._row(right, "נתפסים כשלנו:", FG, swatch=False)
+        self.sw_ours = self._row(right, "Our colour:", ACCENT)
+        self.sw_theirs = self._row(right, "Opponent colour:", "#ff60ff")
+        self.captured = self._row(right, "Captured as ours:", FG, swatch=False)
 
         bt = dict(font=FONT, bd=0, padx=12, pady=7, cursor="hand2")
-        self.btn_ours = tk.Button(right, text="הקבוצה שלנו", bg="#2f7d2f", fg="white", command=lambda: self.pick("ours"), **bt)
+        self.btn_ours = tk.Button(right, text="Our team", bg="#2f7d2f", fg="white", command=lambda: self.pick("ours"), **bt)
         self.btn_ours.pack(fill="x", pady=(14, 3))
-        self.btn_theirs = tk.Button(right, text="קבוצה יריבה", bg="#8a3a8a", fg="white", command=lambda: self.pick("theirs"), **bt)
+        self.btn_theirs = tk.Button(right, text="Opponents", bg="#8a3a8a", fg="white", command=lambda: self.pick("theirs"), **bt)
         self.btn_theirs.pack(fill="x", pady=3)
-        tk.Button(right, text="הבא", bg="#3a3a3a", fg="white", command=self.next, **bt).pack(fill="x", pady=3)
-        tk.Button(right, text="חזרה", bg="#3a3a3a", fg="white", command=self.back, **bt).pack(fill="x", pady=3)
-        tk.Button(right, text="בטל לחיצה אחרונה", bg="#3a3a3a", fg="white", command=self.undo, **bt).pack(fill="x", pady=3)
-        tk.Button(right, text="איפוס הבחירות", bg="#3a3a3a", fg="white", command=self.reset, **bt).pack(fill="x", pady=3)
-        tk.Button(right, text="סיום ושמירה", bg="#1f5fbf", fg="white", command=self.finish, **bt).pack(fill="x", pady=(14, 0))
-        self.status = tk.Label(right, text="", bg=PANEL, fg="#ffd060", font=FONT, justify="right", wraplength=260)
-        self.status.pack(anchor="e", pady=(10, 0))
+        tk.Button(right, text="Next player", bg="#3a3a3a", fg="white", command=self.next, **bt).pack(fill="x", pady=3)
+        tk.Button(right, text="Back", bg="#3a3a3a", fg="white", command=self.back, **bt).pack(fill="x", pady=3)
+        tk.Button(right, text="Undo last click", bg="#3a3a3a", fg="white", command=self.undo, **bt).pack(fill="x", pady=3)
+        tk.Button(right, text="Reset picks", bg="#3a3a3a", fg="white", command=self.reset, **bt).pack(fill="x", pady=3)
+        tk.Button(right, text="Finish and save", bg="#1f5fbf", fg="white", command=self.finish, **bt).pack(fill="x", pady=(14, 0))
+        self.status = tk.Label(right, text="", bg=PANEL, fg="#ffd060", font=FONT, justify="left", wraplength=330)
+        self.status.pack(anchor="w", pady=(10, 0))
 
         for key, fn in (("y", lambda: self.pick("ours")), ("o", lambda: self.pick("theirs")), ("n", self.next), ("b", self.back), ("z", self.undo)):
             m.bind(key, lambda e, fn=fn: fn())
@@ -216,9 +217,9 @@ class PickerWindow:
     def _row(self, parent, text, colour, swatch=True):
         f = tk.Frame(parent, bg=PANEL)
         f.pack(fill="x", pady=3)
+        tk.Label(f, text=text, bg=PANEL, fg=FG, font=FONT).pack(side="left")
         value = tk.Label(f, text="", bg=PANEL, fg=colour, font=FONT)
-        value.pack(side="left")
-        tk.Label(f, text=text, bg=PANEL, fg=FG, font=FONT).pack(side="right")
+        value.pack(side="right")
         if swatch:
             sw = tk.Canvas(f, width=54, height=22, bg=PANEL, highlightthickness=1, highlightbackground="#555555")
             sw.pack(side="right", padx=8)
@@ -282,7 +283,7 @@ class PickerWindow:
             return
         lst = self.ours if who == "ours" else self.theirs
         if len(lst) >= P.PICKER_MAX_PER_COLOR:   # HARD limit per colour: the click is refused and the player stays on screen
-            self.status.config(text=f"כבר נבחרו {P.PICKER_MAX_PER_COLOR} שחקנים לצבע הזה. אפשר לעבור לשחקן הבא או לסיים")
+            self.status.config(text=f"{P.PICKER_MAX_PER_COLOR} players are already picked for this colour. Skip to the next player or finish.")
             return
         colour = self.cands[self.idx]["color"]
         lst.append(colour)
@@ -291,12 +292,12 @@ class PickerWindow:
         self.idx += 1
         if len(self.ours) + len(self.theirs) >= P.PICKER_AUTO_FINISH_TOTAL:   # enough: save and go on to the processing stage by itself
             self.locked = True
-            self.status.config(text=f"נבחרו {len(self.ours) + len(self.theirs)} שחקנים. שומר וממשיך לעיבוד")
+            self.status.config(text=f"{len(self.ours) + len(self.theirs)} players picked. Saving and continuing with the processing...")
             self.show()
             self.master.after(900, self.finish)
             return
         if len(self.ours) >= P.PICKER_MAX_PER_COLOR and not self.theirs:
-            self.status.config(text=f"נבחרו {P.PICKER_MAX_PER_COLOR} שחקנים שלנו. אפשר לסמן גם יריבים (עד {P.PICKER_AUTO_FINISH_TOTAL - P.PICKER_MAX_PER_COLOR}) או ללחוץ סיום")
+            self.status.config(text=f"{P.PICKER_MAX_PER_COLOR} of our players picked. You can also mark opponents (up to {P.PICKER_AUTO_FINISH_TOTAL - P.PICKER_MAX_PER_COLOR}) or press Finish.")
         self.show()
 
     def next(self):
@@ -319,7 +320,7 @@ class PickerWindow:
         self.show()
 
     def reset(self):
-        if messagebox.askyesno("Team colour", "מחיקת כל הבחירות של הסשן הזה?", parent=self.master):
+        if messagebox.askyesno("Team colour", "Clear all picks made in this window?", parent=self.master):
             self.ours.clear()
             self.theirs.clear()
             self.history.clear()
@@ -330,7 +331,7 @@ class PickerWindow:
         if self.saved:   # the auto-finish timer and a click on "save" must not both run
             return
         if not self.ours:
-            self.status.config(text="עוד לא בחרת שחקן שלנו. לחץ לחיצה שמאלית על שחקן בצבע שלנו.")
+            self.status.config(text="You have not picked a player of our team yet. Left-click a player wearing our shirt colour.")
             return
         save_reference(self.session, self.ours, self.theirs)
         self.saved = True

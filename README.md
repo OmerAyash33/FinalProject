@@ -28,10 +28,21 @@ see `src/config.py`). Footage, extracted data and rendered videos are NOT in the
 
 ## The app (drop videos in, get highlights)
 
-`src/app.py` is a desktop window: drag videos in, press start. It extracts the detections, then asks you to click a few players of
-YOUR team (`src/team_color_picker.py`: left click = ours, right click = opponent, N = next player; at most 5 per colour and after 7 clicks it continues by itself; the median of the clicked shirts
-becomes the reference colour of the session, stored in `team_colors.json`, so any colour works - yellow, blue, red), then renders the
-highlight videos. Without a picked colour the old light/dark rule is used (`event_params.OUR_SHADE_*`).
+`src/app.py` is a desktop window with five numbered steps:
+
+1. **Add your videos** - drag them into the list or press "Add videos".
+2. **Name the session and choose the output folder.**
+3. **Shirt colour** - tick "pick our team's shirt colour (recommended)".
+4. **Start processing.** The app runs three stages: (1) extract the detections, (2) show the colour picker, (3) find the events and render the highlights.
+5. **Open your results** - clickable links to the highlight reel and the results folder appear when the run is finished.
+
+The colour picker (`src/team_color_picker.py`) shows players one at a time: left click = ours, right click = opponent (optional), N = next
+player; at most 5 per colour, and after 7 clicks in total it saves and continues by itself. The median of the clicked shirts becomes the
+reference colour of the session, stored in `team_colors.json`, so any colour works - yellow, blue, red. Without a picked colour the old
+light/dark rule is used (`event_params.OUR_SHADE_*`).
+
+Box colours in the preview and in the rendered videos: goal dark blue, **ball white (the only white box)**, our team yellow, opponents
+magenta, players without a team mid grey.
 
 ```
 python src/app.py                  # run from source

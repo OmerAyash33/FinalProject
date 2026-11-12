@@ -100,8 +100,10 @@ DETECTION_COLORS = {
     "goal": (170, 40, 0),              # dark blue
     "team_a": (0, 255, 255),           # yellow   - OUR team (see event_params.OUR_SHADE_BY_SESSION)
     "team_b": (255, 0, 255),           # magenta  - the opponents
-    "player_unassigned": (170, 170, 170),  # grey - detected, but no team yet / no stable track
-    "ball": (255, 255, 255),           # white
+    # mid grey - detected, but no team yet / no stable track. Deliberately DARK: the old light grey (170) was read as white on
+    # compressed video, and white is reserved for the ball (checked 2026-11-12: ~21% of the person boxes in the rendered clips are "no team").
+    "player_unassigned": (120, 120, 120),
+    "ball": (255, 255, 255),           # white - the ONLY white box
 }
 EVENT_COLORS = {
     "PASS_SUCCESS": (0, 200, 0),        # green
