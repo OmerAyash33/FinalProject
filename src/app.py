@@ -39,7 +39,11 @@ def run_worker(job_path):
     """Second process: Stage 1/audio ("extract") or Stage 2 + selection + Stage 3 ("analyze") for the videos in the job file."""
     with open(job_path, "r", encoding="utf-8") as f:
         job = json.load(f)
-    os.environ["FOOTBALL_LIVE_PREVIEW"] = "0"      # no preview window inside the app
+    if job.get("preview_file"):                    # the window of the app shows this JPEG (the worker has no window of its own)
+        os.environ["FOOTBALL_LIVE_PREVIEW"] = "1"
+        os.environ["FOOTBALL_PREVIEW_FILE"] = job["preview_file"]
+    else:
+        os.environ["FOOTBALL_LIVE_PREVIEW"] = "0"
     os.environ["FOOTBALL_IN_APP"] = "1"            # the app makes the links itself (links.print_result_links prints plain paths only)
     # Everything the pipeline prints goes into a log file that the window follows (a windowed exe has no usable stdout, and the file stays
     # as a record of the run).
@@ -87,8 +91,13 @@ class App:
         self.session_var = tk.StringVar()
         self.out_var = tk.StringVar(value=os.path.join(APP_ROOT, "output"))
         self.pick_var = tk.BooleanVar(value=True)
+        self.live_var = tk.BooleanVar(value=True)
+        self._live_win = self._live_frame = self._live_label = self._live_img = None
+        self._live_path, self._live_mtime = None, 0
         self.status_var = tk.StringVar(value="")
         self._build()
+        r.update_idletasks()   # the screen's text scale decides how tall the five steps are: size the window to its content (as far as the screen allows) so Step 4's progress bar and log are never cut off
+        r.geometry(f"900x{max(640, min(r.winfo_reqheight() + 10, r.winfo_screenheight() - 80))}")
         r.after(150, self._pump)
 
     # ---- layout
@@ -129,7 +138,7 @@ class App:
         listf.pack(fill="x", expand=True)
         sb = tk.Scrollbar(listf)
         sb.pack(side="right", fill="y")
-        self.listbox = tk.Listbox(listf, height=4, bg="#111111", fg=FG, selectmode="extended", font=FONT_SMALL, yscrollcommand=sb.set,
+        self.listbox = tk.Listbox(listf, height=3, bg="#111111", fg=FG, selectmode="extended", font=FONT_SMALL, yscrollcommand=sb.set,
                                   highlightthickness=0, bd=0, activestyle="none")
         self.listbox.pack(side="left", fill="both", expand=True)
         sb.config(command=self.listbox.yview)
@@ -174,6 +183,8 @@ class App:
         self.cancel_btn = self._button(btns, "Cancel", self.cancel, bg="#8a3a3a", pady=8, state="disabled")
         self.cancel_btn.pack(side="left", padx=8)
         tk.Label(btns, textvariable=self.status_var, bg=PANEL, fg=WARN, font=FONT, anchor="w", justify="left", wraplength=470).pack(side="left", padx=12, fill="x", expand=True)
+        tk.Checkbutton(body, text="Show a live view of the detections while they are extracted (recommended)", variable=self.live_var, bg=PANEL, fg=FG,
+                       selectcolor="#111111", activebackground=PANEL, activeforeground=FG, font=FONT_SMALL).pack(anchor="w", pady=(6, 0))
         self.progress = ttk.Progressbar(body, mode="indeterminate")
         self.progress.pack(fill="x", pady=(8, 4))
         logf = tk.Frame(body, bg=PANEL)
@@ -289,7 +300,7 @@ class App:
 
     def snapshot(self):
         """The window's settings as plain values. Taken on the main thread: the worker thread must not touch Tk variables."""
-        return {"session": self.session(), "out_root": self.out_var.get(), "pick": bool(self.pick_var.get()), "videos": list(self.videos)}
+        return {"session": self.session(), "out_root": self.out_var.get(), "pick": bool(self.pick_var.get()), "live": bool(self.live_var.get()), "videos": list(self.videos)}
 
     def open_results(self):
         d = self.out_dir()
@@ -340,13 +351,80 @@ class App:
                     val()
         except queue.Empty:
             pass
+        self._live_tick()
         self.root.after(150, self._pump)
+
+    # ---- live view (the worker writes the latest annotated frame to a JPEG about 6 times a second; this window shows it)
+    def _live_open(self, path):
+        tk = self.tk
+        try:
+            import PIL.ImageTk  # noqa: F401
+        except ImportError:
+            return
+        self._live_close()
+        self._live_path, self._live_mtime = path, 0
+        w = tk.Toplevel(self.root)
+        w.title("Live view - what the detector sees right now")
+        w.configure(bg=BG)
+        x = self.root.winfo_x() + self.root.winfo_width() + 8
+        if x + 820 > self.root.winfo_screenwidth():
+            x = max(0, self.root.winfo_screenwidth() - 820)
+        w.geometry(f"800x500+{x}+{self.root.winfo_y()}")
+        w.minsize(320, 220)
+        tk.Label(w, text="Players are drawn in their team's colour (yellow = ours, magenta = the others, grey = not decided yet), the ball is white, the goal blue. "
+                         "The extraction itself is not slowed down.", bg=BG, fg=MUTED, font=FONT_SMALL, wraplength=780, justify="left").pack(anchor="w", padx=8, pady=(6, 2))
+        frame = tk.Frame(w, bg="#000000")
+        frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        frame.pack_propagate(False)
+        label = tk.Label(frame, text="Waiting for the first frame...", bg="#000000", fg=MUTED, font=FONT)
+        label.place(relx=0.5, rely=0.5, anchor="center")
+        w.protocol("WM_DELETE_WINDOW", self._live_close)
+        self._live_win, self._live_frame, self._live_label = w, frame, label
+
+    def _live_close(self):
+        if self._live_win is not None:
+            try:
+                self._live_win.destroy()
+            except Exception:
+                pass
+        self._live_win = self._live_frame = self._live_label = self._live_img = None
+        if self._live_path:
+            for p in (self._live_path, self._live_path + ".tmp"):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        self._live_path = None
+
+    def _live_tick(self):
+        if self._live_win is None or not self._live_path:
+            return
+        try:
+            m = os.stat(self._live_path).st_mtime_ns
+            if m == self._live_mtime:
+                return
+            from PIL import Image, ImageTk
+            im = Image.open(self._live_path)
+            im.load()
+            self._live_mtime = m
+            fw, fh = max(self._live_frame.winfo_width(), 50), max(self._live_frame.winfo_height(), 50)
+            s = min(fw / im.width, fh / im.height)
+            im = im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.BILINEAR)
+            self._live_img = ImageTk.PhotoImage(im)      # keep a reference, Tk drops the picture otherwise
+            self._live_label.config(image=self._live_img, text="")
+        except Exception:
+            return    # file missing / being replaced right now: the next tick (150 ms) picks it up
 
     # ---- running
     def _spawn(self, stage, cfg, stage_no, stage_total):
         """Run one worker stage; stream its output into the log. Returns True when it finished cleanly."""
         log_path = os.path.join(cfg["out_root"], "logs", f"{cfg['session']}_{stage}.log")
         job = {"stage": stage, "session": cfg["session"], "out_root": cfg["out_root"], "videos": cfg["videos"], "log": log_path}
+        live_path = None
+        if stage == "extract" and cfg.get("live"):
+            live_path = os.path.join(tempfile.gettempdir(), f"football_live_{os.getpid()}.jpg")
+            job["preview_file"] = live_path
+            self.msgs.put(("call", lambda p=live_path: self._live_open(p)))
         fd, job_path = tempfile.mkstemp(suffix=".json", prefix="football_job_")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(job, f)
@@ -372,6 +450,13 @@ class App:
                     break
                 time.sleep(0.3)
         code = self.proc.returncode
+        if live_path:
+            self.msgs.put(("call", self._live_close))
+            for q in (live_path, live_path + ".tmp"):    # also when the user had already closed the live window and the worker kept writing
+                try:
+                    os.remove(q)
+                except OSError:
+                    pass
         try:
             os.remove(job_path)
         except OSError:
@@ -457,7 +542,7 @@ def run_selftest(out_path):
     """`FootballHighlights.exe --selftest out.txt`: imports everything the window and the worker need (for checking a packaged build)."""
     lines = []
     for name in ("torch", "cv2", "numpy", "pandas", "sklearn.cluster", "scipy.signal", "av", "PIL.ImageTk", "tkinter", "tkinterdnd2", "ultralytics",
-                 "team_color_picker", "main", "tactical_analyzer", "highlight_generator", "links"):
+                 "team_color_picker", "main", "tactical_analyzer", "highlight_generator", "links", "shot_evidence"):
         try:
             __import__(name)
             lines.append(f"ok    {name}")

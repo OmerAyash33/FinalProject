@@ -6,6 +6,7 @@ pipeline_outputs/*
 pipeline_outputs/_analysis/*
 !pipeline_outputs/_analysis/benchmark_history.csv
 !pipeline_outputs/_analysis/heldout_audit_*.md
+!pipeline_outputs/_analysis/progress_report_*.md
 *.mp4
 *.MP4
 *.mov

@@ -38,6 +38,8 @@ def _components(e):
         c["speed"] = _clip(e.get("speed", 0.0) / P.SCORE_SPEED_FULL_BW)
     if e["category"] in ("SHOT_ON_TARGET", "SHOT_OFF_TARGET") and e.get("kick_z") is not None and np.isfinite(e.get("kick_z", np.nan)):
         c["sound"] = _clip(e["kick_z"] / P.AUDIO_SCORE_FULL_Z)   # only present when the video has an audio track
+    if e["category"] in ("SHOT_ON_TARGET", "SHOT_OFF_TARGET") and e.get("shot_confidence") is not None and np.isfinite(e.get("shot_confidence", np.nan)):
+        c["check"] = _clip(e["shot_confidence"])   # the self-check's evidence score (event_params 4c): confirmed shots with strong evidence rank first
     if e["event_type"] == "SHOT_ON_TARGET":
         c["overlap"] = _clip(e.get("overlap_frames", 0) / (3.0 * P.SHOT_ON_TARGET_FRAMES))
     if e["event_type"] == "SHOT_OFF_TARGET":
@@ -48,7 +50,7 @@ def _components(e):
 def score_event(e):
     """0-100 score of one event dict: weighted mean of its components (weights = SCORE_WEIGHTS[category])."""
     comp = _components(e)
-    weights = {k: w for k, w in P.SCORE_WEIGHTS[e["category"]].items() if k != "sound" or "sound" in comp}   # no audio -> the sound weight drops out
+    weights = {k: w for k, w in P.SCORE_WEIGHTS[e["category"]].items() if k not in ("sound", "check") or k in comp}   # no audio -> the sound weight drops out; no self-check -> the check weight drops out
     total = sum(weights.values())
     return 100.0 * sum(w * comp.get(name, 0.0) for name, w in weights.items()) / total
 

@@ -43,6 +43,6 @@ if __name__ == "__main__":
                 continue
             log(f"{session}/{base}: extracting...")
             partial = csv_path + ".partial"  # renamed only when the whole video finished, so a killed run never leaves a truncated CSV that looks complete
-            VideoProcessor(video, partial, show_preview=False).process_video()
+            VideoProcessor(video, partial, show_preview=os.environ.get("FOOTBALL_LIVE_PREVIEW", "0") == "1").process_video()   # live view only when asked for: FOOTBALL_LIVE_PREVIEW=1
             os.replace(partial, csv_path)
     log(f"extract_data_only finished in {(time.time() - t0) / 60:.1f} min.")

@@ -35,10 +35,15 @@ TARGET_WIDTH = 960 if _HAS_CUDA else 480
 # Height is derived per-video to preserve its native aspect ratio.
 PREVIEW_WIDTH = 1280
 
-# What it does: show the live "Football Video" window while Stage 1 extracts data (boxes, team colours, Players/Ball/Goal read-out).
-# Measured on this machine: with the window ~8 frames/s, without it ~48 frames/s (a 5-minute video takes ~3.5 min instead of ~19).
-# Set False for batch runs; tools/extract_data_only.py always runs without it. The CSV is identical either way.
-LIVE_PREVIEW = os.environ.get("FOOTBALL_LIVE_PREVIEW", "1") != "0"   # the packaged app (src/app.py) sets FOOTBALL_LIVE_PREVIEW=0
+# What it does: show the live view while Stage 1 extracts data (boxes, team colours, Players/Ball/Goal read-out, frame x of N).
+# Drawing EVERY frame cost a lot (measured: ~8 frames/s with the window, ~48 without), so the view is now drawn only LIVE_PREVIEW_FPS
+# times per second (the detections of all the other frames are still made and written; the CSV is identical either way).
+# FOOTBALL_LIVE_PREVIEW=0 turns the live view off (tools/extract_data_only.py always runs without it).
+# FOOTBALL_PREVIEW_FILE=<path.jpg>: instead of an OpenCV window the latest view is written to that JPEG (the desktop app shows it in its own
+# "Live view" window; a windowless worker process cannot show one itself).
+LIVE_PREVIEW = os.environ.get("FOOTBALL_LIVE_PREVIEW", "1") != "0"
+LIVE_PREVIEW_FPS = float(os.environ.get("FOOTBALL_PREVIEW_FPS", "6"))
+LIVE_PREVIEW_FILE = os.environ.get("FOOTBALL_PREVIEW_FILE") or None
 
 # What it does: how many extracted-data rows accumulate in RAM before being
 # flushed to the CSV on disk.

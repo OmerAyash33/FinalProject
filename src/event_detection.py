@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 import event_params as P
+import shot_evidence as SE
 from ball_track import MIN_BW_PX
 
 
@@ -90,6 +91,17 @@ class Scene:
         goals = df[(df["type"] == "goal")].sort_values(["frame", "confidence"], ascending=[True, False]).drop_duplicates("frame")
         self.goal_frames = goals["frame"].values
         self.goals = goals.set_index("frame")
+        cam = df[df["type"] == "camera"].drop_duplicates("frame").set_index("frame").sort_index()
+        self.pan = (cam["cam_dx"].abs() + cam["cam_dy"].abs()).fillna(0.0)   # camera pan per frame in scene pixels (the whip after a kick)
+
+    def pan_max(self, f0, f1):
+        s = self.pan.loc[f0:f1]
+        return float(s.max()) if len(s) else 0.0
+
+    def goal_width_max(self, f0, f1):
+        """Widest goal detection (pixels) in [f0, f1]; 0 if the goal was not seen. A shot is taken near the goal, so it looks big."""
+        m = (self.goal_frames >= f0) & (self.goal_frames <= f1)
+        return float(self.goals.loc[self.goal_frames[m], "width"].max()) if m.any() else 0.0
 
     def camera(self, f):
         f = min(max(int(f), 1), self.track.n_frames)
@@ -265,6 +277,8 @@ def detect_events(df, track, team_model, fps=30.0, scene=None, audio=None):
         elif audio_shot is not None:   # AUDIO_SHOT_PRIORITY == "after_pass": no pass could be resolved, so the loud kick towards the goal is a shot
             events.append(audio_shot)
 
+    if P.SHOT_CHECK_ENABLED:
+        events = _shot_self_check(events, scene, track, audio if use_audio else None, holds, fps)
     events.sort(key=lambda e: e["start_frame"])
     return events
 
@@ -314,7 +328,7 @@ def _judge_shot(scene, track, f0, mean_speed, fps):
     if coherent < P.SHOT_MIN_FAST_PAIRS:
         return None
     vis = len(seen_in_window) / float(f_end - f0 + 1)
-    base = {"start_frame": int(f0), "end_frame": int(f_end), "speed": mean_speed, "visibility": vis}
+    base = {"start_frame": int(f0), "end_frame": int(f_end), "speed": mean_speed, "visibility": vis, "shot_origin": "ball_track"}
     if overlap_frames >= P.SHOT_ON_TARGET_FRAMES:
         return {**base, "event_type": "SHOT_ON_TARGET", "category": "SHOT_ON_TARGET", "overlap_frames": overlap_frames, "overlap_fraction": best_overlap,
                 "reasoning": f"Speed {mean_speed:.1f} bw/f, ball overlapped the goal for {overlap_frames} frames."}
@@ -336,28 +350,25 @@ def _judge_shot(scene, track, f0, mean_speed, fps):
                          f"Speed {mean_speed:.1f} bw/f towards the goal, never overlapped it."}
 
 
-def _judge_audio_shot(scene, track, audio, f0, mean_speed, fps):
-    """A hold end with a loud click (AUDIO_KICK_MIN_Z) and the goal in view for AUDIO_SHOT_GOAL_FRAMES of the next
-    AUDIO_SHOT_GOAL_WINDOW_FRAMES frames is a shot. On target if the ball was seen overlapping the goal like a visual shot
-    (SHOT_ON_TARGET_FRAMES frames), otherwise the outcome is unknown (ball not tracked in flight) and AUDIO_SHOT_OUTCOME_DEFAULT is used."""
-    kick_z = audio.kick_z(f0, fps)
-    if kick_z < P.AUDIO_KICK_MIN_Z:
-        return None
-    if scene.goal_frames_between(f0, f0 + P.AUDIO_SHOT_GOAL_WINDOW_FRAMES) < P.AUDIO_SHOT_GOAL_FRAMES:
-        return None
+def _ball_stays_with_wearer(track, f0, f_end):
+    """True if the ball did not leave the wearer after f0, which a shot must do.
+    A shot leaves him: if the ball is seen again shortly after the kick and is still nearly as big as it was (or bigger), it stayed at his feet / in his
+    hands (a dribble, a hand throw). Same width gate as the visual shot rule (SHOT_MAX_WIDTH_RATIO), applied only when the ball is seen again at all.
+    Removed 3 of 7 false audio shots on the labelled videos and none of the 4 real ones. And if the ball keeps being seen in the wearer's own zone
+    after the kick, he still has it (a dribble towards the goal, a water bottle held in the hand that the detector took for a ball). The real shots have
+    0-4 such sightings, the false ones 18-42."""
     t = track.t
-    f_end = min(track.n_frames, f0 + P.SHOT_WINDOW_FRAMES)
-    # A shot leaves the wearer: if the ball is seen again shortly after the kick and is still nearly as big as it was (or bigger), it stayed
-    # at his feet / in his hands (a dribble, a hand throw). Same width gate as the visual shot rule (SHOT_MAX_WIDTH_RATIO), applied only
-    # when the ball is seen again at all. Removed 3 of 7 false audio shots on the labelled videos and none of the 4 real ones.
     w0 = float(t.at[f0, "w"]) if f0 in t.index else float("nan")
     after = track.sightings(f0 + 3, f_end)
     if np.isfinite(w0) and w0 > 0 and len(after) and float(after["w"].iloc[-1]) > P.SHOT_MAX_WIDTH_RATIO * w0:
-        return None
-    # ... and if the ball keeps being seen in the wearer's own zone after the kick, he still has it (a dribble towards the goal, a water bottle
-    # held in the hand that the detector took for a ball). The real shots have 0-4 such sightings, the false ones 18-42.
-    if len(after) and int((after["y"] / track.screen_h >= P.SELF_ZONE_EXIT_Y).sum()) >= P.AUDIO_SHOT_MAX_ZONE_SIGHTINGS:
-        return None
+        return True
+    return bool(len(after) and int((after["y"] / track.screen_h >= P.SELF_ZONE_EXIT_Y).sum()) >= P.AUDIO_SHOT_MAX_ZONE_SIGHTINGS)
+
+
+def _unseen_shot_event(scene, track, f0, f_end, mean_speed, kick_z, origin, lead):
+    """A shot whose flight the ball track did not follow (stage A "audio+goal", stage B "self_check"). On target if the ball was seen overlapping
+    the goal like a visual shot (SHOT_ON_TARGET_FRAMES frames), otherwise the outcome is unknown and AUDIO_SHOT_OUTCOME_DEFAULT is used."""
+    t = track.t
     overlap_frames, best_overlap, closest = 0, 0.0, None
     for f in range(f0, f_end + 1):
         if not track.present(f):
@@ -375,18 +386,67 @@ def _judge_audio_shot(scene, track, audio, f0, mean_speed, fps):
         closest = d if closest is None else min(closest, d)
     speed = float(mean_speed) if np.isfinite(mean_speed) else 0.0
     vis = len(track.sightings(f0, f_end)) / float(f_end - f0 + 1)
-    base = {"start_frame": int(f0), "end_frame": int(f_end), "speed": speed, "visibility": vis, "kick_z": kick_z}
+    base = {"start_frame": int(f0), "end_frame": int(f_end), "speed": speed, "visibility": vis, "kick_z": kick_z, "shot_origin": origin}
     if overlap_frames >= P.SHOT_ON_TARGET_FRAMES:
         outcome, why = "SHOT_ON_TARGET", f"ball overlapped the goal for {overlap_frames} frames"
     else:   # the ball was not tracked into (or past) the goal: the outcome is unknown, a global default decides
         outcome = "SHOT_OFF_TARGET" if P.AUDIO_SHOT_OUTCOME_DEFAULT == "off_target" else "SHOT_ON_TARGET"
         why = f"ball not tracked in flight, outcome unknown -> {P.AUDIO_SHOT_OUTCOME_DEFAULT.replace('_', ' ')} by default (AUDIO_SHOT_OUTCOME_DEFAULT)"
     ev = {**base, "event_type": outcome, "category": outcome, "overlap_frames": overlap_frames, "overlap_fraction": best_overlap,
-          "reasoning": f"Kick sound (z {kick_z:.0f}) at the hold end, goal in view {scene.goal_frames_between(f0, f0 + P.AUDIO_SHOT_GOAL_WINDOW_FRAMES)} of "
-                       f"{P.AUDIO_SHOT_GOAL_WINDOW_FRAMES} frames after; {why}."}
+          "reasoning": f"{lead}; {why}."}
     if outcome == "SHOT_OFF_TARGET":
         ev["closeness_goal_widths"] = closest if closest is not None else P.SCORE_CLOSENESS_FULL_GOAL_WIDTHS
     return ev
+
+
+def _judge_audio_shot(scene, track, audio, f0, mean_speed, fps):
+    """Stage A, second rule: a hold end with a loud click (AUDIO_KICK_MIN_Z) and the goal in view for AUDIO_SHOT_GOAL_FRAMES of the next
+    AUDIO_SHOT_GOAL_WINDOW_FRAMES frames is a shot (unless the ball stayed with the wearer)."""
+    kick_z = audio.kick_z(f0, fps)
+    if kick_z < P.AUDIO_KICK_MIN_Z:
+        return None
+    if scene.goal_frames_between(f0, f0 + P.AUDIO_SHOT_GOAL_WINDOW_FRAMES) < P.AUDIO_SHOT_GOAL_FRAMES:
+        return None
+    f_end = min(track.n_frames, f0 + P.SHOT_WINDOW_FRAMES)
+    if _ball_stays_with_wearer(track, f0, f_end):
+        return None
+    return _unseen_shot_event(scene, track, f0, f_end, mean_speed, kick_z, "audio+goal",
+                              f"Kick sound (z {kick_z:.0f}) at the hold end, goal in view {scene.goal_frames_between(f0, f0 + P.AUDIO_SHOT_GOAL_WINDOW_FRAMES)} of "
+                              f"{P.AUDIO_SHOT_GOAL_WINDOW_FRAMES} frames after")
+
+
+def _shot_self_check(events, scene, track, audio, holds, fps):
+    """Stage B (event_params 4c): soft evidence for shots. (1) every shot already found carries its evidence score as `shot_confidence`;
+    (2) every kick candidate that is not near such a shot and whose evidence reaches SHOT_CHECK_MIN_SCORE becomes a "possible shot" - it is ADDED, or
+    it REPLACES the pass the same hold end produced. Nothing here is required for a shot to exist: stage A decides on its own."""
+    is_shot = lambda e: e["category"] in ("SHOT_ON_TARGET", "SHOT_OFF_TARGET")
+    shots = [e for e in events if is_shot(e)]
+    for e in shots:
+        e["shot_confidence"] = round(SE.evidence(scene, track, audio, int(e["start_frame"]), fps)[0], 3)
+    taken = [int(e["start_frame"]) for e in shots]
+    added = []
+    for f0, _kind in SE.candidates(track, holds):
+        if any(abs(f0 - s) <= P.SHOT_CHECK_DEDUP_FRAMES for s in taken):
+            continue
+        score, cues = SE.evidence(scene, track, audio, f0, fps)
+        if score < P.SHOT_CHECK_MIN_SCORE:
+            continue
+        f_end = min(track.n_frames, f0 + P.SHOT_WINDOW_FRAMES)
+        if _ball_stays_with_wearer(track, f0, f_end):
+            continue
+        ev = _unseen_shot_event(scene, track, f0, f_end, track.speed(f0, f0 + P.SPEED_WINDOW_FRAMES)["mean"],
+                                audio.kick_z(f0, fps) if audio is not None else None, "self_check",
+                                f"Possible shot (self-check, evidence {score:.2f}: {SE.describe(cues)})")
+        ev["shot_confidence"] = round(score, 3)
+        added.append((score, ev))
+    keep = []
+    for score, ev in sorted(added, key=lambda x: -x[0]):     # at most one possible shot per SHOT_CHECK_DEDUP_FRAMES, the best wins
+        if all(abs(ev["start_frame"] - k["start_frame"]) > P.SHOT_CHECK_DEDUP_FRAMES for k in keep):
+            keep.append(ev)
+    for ev in keep:
+        events = [e for e in events if not (e["category"] in ("PASS_SUCCESS", "PASS_INCOMPLETE") and abs(int(e["start_frame"]) - ev["start_frame"]) <= 5)]
+        events.append(ev)
+    return events
 
 
 def _end_of_flight(track, f0, mean_speed):

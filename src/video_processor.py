@@ -13,7 +13,7 @@ import numpy as np
 # doesn't - some DLL pandas loads shadows one torch's c10.dll depends on).
 from config import (TARGET_WIDTH, PREVIEW_WIDTH, CSV_WRITE_CHUNK, UI_COLORS, UI_SETTINGS,
                      DETECTOR_MODEL_PATH, DETECTOR_MODEL_OPENVINO_DIR, DETECTOR_CONF_THRESHOLD, DETECTOR_VERSION,
-                     DETECTION_COLORS,
+                     DETECTION_COLORS, LIVE_PREVIEW_FPS, LIVE_PREVIEW_FILE,
                      PERSON_CLASS_ID, BALL_CLASS_ID, GOAL_CLASS_ID)
 from logging_utils import log
 from camera_motion import CameraMotionEstimator
@@ -38,6 +38,20 @@ def _put_text(img, text, org, scale, color, thickness=1):
     """Text with a black outline underneath so it stays readable on grass, sky and floodlit night footage alike."""
     cv2.putText(img, text, org, UI_SETTINGS["font_style"], scale, UI_COLORS["black"], thickness + 2)
     cv2.putText(img, text, org, UI_SETTINGS["font_style"], scale, color, thickness)
+
+
+def _write_preview(img, path):
+    """Latest live view as a JPEG for the desktop app: written to a temp name and swapped in, so the reader never sees a half-written file."""
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if not ok:
+        return
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(buf.tobytes())
+        os.replace(tmp, path)
+    except OSError:
+        pass   # the reader had the file open at that very moment; the next view is 1/6 s away
 
 
 class VideoProcessor:
@@ -89,12 +103,17 @@ class VideoProcessor:
         fps = cap.get(cv2.CAP_PROP_FPS)
         native_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         native_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
 
         # Preview canvas: fixed width, height derived to preserve the source
         # video's own aspect ratio (never squished/stretched).
         preview_height = int(round(native_height * PREVIEW_WIDTH / native_width))
-        if self.show_preview:
+        view_on = self.show_preview            # the live view is drawn only LIVE_PREVIEW_FPS times a second (see config.py); 'q' / closing the window switches it off, the extraction goes on
+        view_every = 1.0 / max(LIVE_PREVIEW_FPS, 0.5)
+        last_view = 0.0
+        video_name = os.path.basename(self.video_path)
+        if view_on and not LIVE_PREVIEW_FILE:
             cv2.namedWindow("Football Video", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Football Video", PREVIEW_WIDTH, preview_height)
 
@@ -122,6 +141,9 @@ class VideoProcessor:
             if frame_counter % 1200 == 0:
                 log(f"Extraction: Processed {frame_counter} frames...")
             current_time = time.time()
+            view = view_on and (current_time - last_view) >= view_every      # draw this frame's view?
+            if view:
+                last_view = current_time
 
             frame_times.append(current_time)
             while frame_times and (current_time - frame_times[0]) > 3.0:
@@ -150,7 +172,7 @@ class VideoProcessor:
             # result afterward is what caused the old blocky/pixelated look - the
             # text itself was rasterized small and then blown up.
             display_frame = (cv2.resize(frame, (PREVIEW_WIDTH, preview_height), interpolation=cv2.INTER_CUBIC)
-                             if self.show_preview else None)
+                             if view else None)
             scale_x = PREVIEW_WIDTH / frame_width
             scale_y = preview_height / frame_height
 
@@ -196,7 +218,7 @@ class VideoProcessor:
                         chest_crop = frame[chest_y1:chest_y2, chest_x1:chest_x2]
                         avg_color = np.average(np.average(chest_crop, axis=0), axis=0)
                         color_b, color_g, color_r = avg_color[0], avg_color[1], avg_color[2]
-                        if colorizer is not None and confidence >= 0.5 and height >= TEAM_MIN_BOX_HEIGHT_PX:
+                        if view and colorizer is not None and confidence >= 0.5 and height >= TEAM_MIN_BOX_HEIGHT_PX:
                             frame_person_colors.append((color_b, color_g, color_r))
 
                 match_data.append({
@@ -238,8 +260,10 @@ class VideoProcessor:
 
             display_frame[0:122, 0:470] = (display_frame[0:122, 0:470] * 0.35).astype(np.uint8)  # dim the corner behind the read-out so dark-blue text stays legible on sky
             minutes, seconds = elapsed_seconds // 60, elapsed_seconds % 60
-            _put_text(display_frame, f"Extracting Data: {minutes:02d}:{seconds:02d} |Frame:{frame_counter}",
+            total = f"/{n_frames}" if n_frames > 0 else ""
+            _put_text(display_frame, f"Extracting Data: {minutes:02d}:{seconds:02d} |Frame:{frame_counter}{total}",
                       (40, 25), 0.6, UI_COLORS["white"])
+            _put_text(display_frame, video_name, (40, preview_height - 18), 0.6, UI_COLORS["white"])
             _put_text(display_frame, f"{last_fps_text}   Model: {DETECTOR_VERSION}", (40, 50), 0.6, UI_COLORS["light_gray"])
             # Live detection read-out: what the model found in THIS frame, in the same colours the boxes are drawn in.
             _put_text(display_frame, f"Players: {player_count}", (40, 80), 0.6, DETECTION_COLORS["player_unassigned"])
@@ -248,12 +272,17 @@ class VideoProcessor:
             _put_text(display_frame, "Team A (ours)", (40, 110), 0.6, DETECTION_COLORS["team_a"])
             _put_text(display_frame, "Team B", (230, 110), 0.6, DETECTION_COLORS["team_b"])
 
-            cv2.imshow("Football Video", display_frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+            if LIVE_PREVIEW_FILE:
+                _write_preview(display_frame, LIVE_PREVIEW_FILE)
+            else:
+                cv2.imshow("Football Video", display_frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q") or cv2.getWindowProperty("Football Video", cv2.WND_PROP_VISIBLE) < 1:
+                    view_on = False        # only the live view stops - an accidental 'q' must not cut a long extraction short
+                    cv2.destroyAllWindows()
 
         reader.stop()
-        if self.show_preview:
+        if self.show_preview and not LIVE_PREVIEW_FILE:
             cv2.destroyAllWindows()
 
         if len(match_data) > 0:  # flush whatever's left in the buffer once the video ends

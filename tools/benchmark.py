@@ -15,7 +15,7 @@ event.start - 15 <= label <= event.end + 90 (frames). Shot labels within 150 fra
   class_acc   = of the matched ones, share whose class is right (pass completed/incomplete, dribble short/long, shot on/off target)
   precision*  = share of the events (in the labelled videos) that match a label. Only a LOWER bound: it assumes every pass/shot/dribble
                 the user saw was labelled, and the user admits some were not.
-Usage:  .venv/Scripts/python.exe tools/benchmark.py "what changed in this run" [--baseline]
+Usage:  .venv/Scripts/python.exe tools/benchmark.py "what changed in this run" [--baseline | --no-shot-check]
         --baseline = run with the parameters from BEFORE the 2026-11-07 label calibration (pass trigger 0.5, receiver 1.5 / 2.5, no audio)
 """
 import os
@@ -47,8 +47,8 @@ FAMILY_OF_EVENT = {"PASS_SUCCESS": "PASS", "PASS_INCOMPLETE": "PASS", "SHOT_ON_T
                    "DRIBBLE_SHORT": "DRIB", "DRIBBLE_MEDIUM": "DRIB", "DRIBBLE_LONG": "DRIB"}
 KEY_PARAMS = ["PASS_TRIGGER_SPEED_BW", "PASS_RECEIVER_MAX_DIST_HEIGHTS", "PASS_VECTOR_RECEIVER_DIST_HEIGHTS", "UNRESOLVED_PASS", "OUR_SHADE_DEFAULT",
               "HOLD_GRACE_FRAMES", "DRIBBLE_MEDIUM_MIN_FRAMES", "DRIBBLE_LONG_MIN_FRAMES", "AUDIO_ENABLED", "AUDIO_KICK_MIN_Z", "AUDIO_SHOT_GOAL_FRAMES",
-              "AUDIO_SHOT_MAX_ZONE_SIGHTINGS", "AUDIO_SHOT_OUTCOME_DEFAULT"]
-BEFORE_CALIBRATION = {"PASS_TRIGGER_SPEED_BW": 0.5, "PASS_RECEIVER_MAX_DIST_HEIGHTS": 1.5, "PASS_VECTOR_RECEIVER_DIST_HEIGHTS": 2.5, "AUDIO_ENABLED": False}
+              "AUDIO_SHOT_MAX_ZONE_SIGHTINGS", "AUDIO_SHOT_OUTCOME_DEFAULT", "SHOT_CHECK_ENABLED", "SHOT_CHECK_MIN_SCORE"]
+BEFORE_CALIBRATION = {"PASS_TRIGGER_SPEED_BW": 0.5, "PASS_RECEIVER_MAX_DIST_HEIGHTS": 1.5, "PASS_VECTOR_RECEIVER_DIST_HEIGHTS": 2.5, "AUDIO_ENABLED": False, "SHOT_CHECK_ENABLED": False}
 
 
 def stage2_events(session, video):
@@ -119,6 +119,9 @@ def main():
         for k, v in BEFORE_CALIBRATION.items():
             setattr(P, k, v)
         note = (note + " " if note else "") + "[baseline: pre-calibration params]"
+    elif "--no-shot-check" in sys.argv:      # everything as now, but without stage B of the shot logic (event_params 4c)
+        P.SHOT_CHECK_ENABLED = False
+        note = (note + " " if note else "") + "[shot self-check OFF]"
     lab = pd.read_csv(LABELS, encoding="utf-8-sig")
     t0 = time.time()
     tot = {}

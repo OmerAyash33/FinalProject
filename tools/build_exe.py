@@ -33,7 +33,8 @@ README = """Football highlights
 6. Step 5 - when the run is finished, click the links to open the highlight reel (All_Matches_Master_Highlights.mp4 = everything in one reel)
    or the results folder.
 
-- The extraction is the slow stage: a few minutes per 5-minute video on an NVIDIA GPU.
+- The extraction is the slow stage: a few minutes per 5-minute video on an NVIDIA GPU. While it runs, a "Live view" window shows what the detector sees
+  (players in their team colour, ball, goal); untick "Show a live view" in Step 4 if you do not want it. It costs about 5% speed.
 - Colours are remembered per session name in team_colors.json (next to the exe). Delete the entry, or press "Pick shirt colour now", to change it.
 - Each run writes a log to <output folder>/logs/. Send it along if something fails.
 """

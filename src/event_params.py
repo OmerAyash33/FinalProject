@@ -136,6 +136,34 @@ AUDIO_SCORE_FULL_Z = 100.0        # click strength (robust z) that earns the ful
 AUDIO_SHOT_PRIORITY = "over_pass" #"over_pass": a loud kick with the goal in view is a shot even if a receiver can be found; "after_pass": only when no pass was resolved
 
 # ===========================================================================
+# 4c. SHOT SELF-CHECK (stage B of the shot logic: SOFT evidence, never a hard gate)   -> src/shot_evidence.py
+# ===========================================================================
+# Stage A = the two rules above (ball flight towards the goal; loud click + goal in view). They stay exactly as they were and still decide on their own.
+# Stage B looks at every kick candidate (each hold end, plus the last sighting of a big ball before a long gap) that stage A did not turn into a shot, and
+# adds up five weak cues, none of them required: how big the goal looks (a shot is taken near it), how long it is in view around the kick, the click of
+# the kick, a camera whip after the kick, and the ball being gone afterwards. The sum (0..1) can ADD a shot stage A missed or turn a pass into a shot, and it
+# is stored on every shot as `shot_confidence`, which is one component of the shot's score (so a self-check shot ranks below a confirmed one and only
+# reaches the highlight reel when there are few better ones).
+# Why soft + hand-set (2026-11-14): on the 21 kicks the user's labels + my frame-by-frame review located (labels_refined_shots.csv), no single cue separates a
+# kick from any other hold end (best AUCs: goal size 0.75, goal in view 0.76, click 0.69, whip 0.57, ball gone 0.58 on the calibration videos, and every
+# one of them is weaker on the 4 held-out January videos) - so any hard threshold on one cue either misses most shots or fires on everything. The ramps below
+# are physical scales (not fitted), the weights are round numbers, and the only dial that was set from data is SHOT_CHECK_MIN_SCORE, taken as a percentile of the
+# scores of ALL candidates (not of the positives): "add at most about one possible shot every 10 minutes". Evidence score AUC: 0.82 calibration, 0.60 held-out.
+SHOT_CHECK_ENABLED = True
+SHOT_CHECK_MIN_SCORE = 0.78       # a candidate at or above this evidence score is a "possible shot" (98th..96th percentile of all candidates: ~0.1-0.2 per minute)
+SHOT_CHECK_VANISH_GAP_FRAMES = 30 # a long gap without any ball sighting makes the last sighting a kick candidate ...
+SHOT_CHECK_BIG_BALL_W = 0.03      # ... if the ball was at least this wide (share of the frame width) in the 30 frames before: it was near the camera
+SHOT_CHECK_RAMPS = {              # cue -> (value that earns 0, value that earns the full 1); linear in between
+    "goal_size": (0.08, 0.30),    # widest goal box in [kick-30, kick+90] as a share of the frame width (median 0.12 at ordinary hold ends, 0.26 at kicks)
+    "goal_frames": (0, 40),       # frames with the goal in view in the 90 frames after the kick
+    "click": (8, 60),             # robust z of the kick sound (+-0.25 s around the kick); this cue drops out of the sum when the video has no audio
+    "whip": (60, 250),            # largest camera pan (|dx|+|dy|, scene px per frame) in the 25 frames after the kick
+    "ball_gone": (20, 0),         # ball sightings in frames kick+5..kick+60 (0 sightings = gone = 1.0)
+}
+SHOT_CHECK_WEIGHTS = {"goal_size": 0.30, "goal_frames": 0.25, "click": 0.20, "whip": 0.10, "ball_gone": 0.15}
+SHOT_CHECK_DEDUP_FRAMES = 90      # at most one possible shot per this many frames (the best one wins); a stage-A shot this close also blocks stage B
+
+# ===========================================================================
 # 5. EVENT SCORES (0-100) AND THE HIGHLIGHT SELECTION
 # ===========================================================================
 TOP_N_PER_EVENT = 3                  # at most this many of each event type go into the final video, best score first
@@ -148,8 +176,8 @@ SCORE_WEIGHTS = {
     "DRIBBLE": {"duration": 0.45, "visibility": 0.25, "pressure": 0.30},
     "PASS_SUCCESS": {"length": 0.30, "speed": 0.15, "pressure": 0.25, "team_confidence": 0.15, "visibility": 0.15},
     "PASS_INCOMPLETE": {"length": 0.30, "speed": 0.15, "team_confidence": 0.35, "visibility": 0.20},
-    "SHOT_ON_TARGET": {"speed": 0.35, "overlap": 0.30, "visibility": 0.35, "sound": 0.25},
-    "SHOT_OFF_TARGET": {"speed": 0.40, "closeness": 0.35, "visibility": 0.25, "sound": 0.25},
+    "SHOT_ON_TARGET": {"speed": 0.35, "overlap": 0.30, "visibility": 0.35, "sound": 0.25, "check": 0.25},
+    "SHOT_OFF_TARGET": {"speed": 0.40, "closeness": 0.35, "visibility": 0.25, "sound": 0.25, "check": 0.25},
 }
 SCORE_LENGTH_FULL_PX = 400.0         # pass length (scene px at 960 wide) that earns the full "length" component
 SCORE_SPEED_FULL_BW = 4.0            # ball speed (bw/frame) that earns the full "speed" component
