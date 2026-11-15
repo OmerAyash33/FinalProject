@@ -34,7 +34,12 @@ README = """Football highlights
    or the results folder.
 
 - The extraction is the slow stage: a few minutes per 5-minute video on an NVIDIA GPU. While it runs, a "Live view" window shows what the detector sees
-  (players in their team colour, ball, goal); untick "Show a live view" in Step 4 if you do not want it. It costs about 5% speed.
+  (players in their team colour, ball, goal); untick "Show a live view" in Step 4 if you do not want it. It costs about 10% speed.
+- Every highlighted move ends on a summary card; its COACH text is a few sentences on how the move went and what to try next time: praise when it
+  worked (it moved the game forward / the threat was real), advice when it did not (shoot or pass earlier), good control for a dribble, and then the
+  player who mattered - an opponent or a teammate, on your left or right, close or far - and why. It is built from what the camera saw, so it is an
+  impression, and left / right can be a little off. The same text is in the log. Box colours: yellow = our team, magenta = the others,
+  orange = a person without a team yet, white = the ball (only), dark blue = the goal.
 - Colours are remembered per session name in team_colors.json (next to the exe). Delete the entry, or press "Pick shirt colour now", to change it.
 - Each run writes a log to <output folder>/logs/. Send it along if something fails.
 """

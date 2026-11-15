@@ -31,7 +31,7 @@ OUR_SHADE_BY_SESSION = {
 
 # How a player's colour is turned into a team (Stage 2, and the colours of the Stage 1 live preview).
 # Measured on the May sessions: the chest crop of a small, far player is mostly grass or sky, so only players whose box is at
-# least TEAM_MIN_BOX_HEIGHT_PX tall (960-wide frame) take part in the clustering; smaller ones stay grey ("no team").
+# least TEAM_MIN_BOX_HEIGHT_PX tall (960-wide frame) take part in the clustering; smaller ones stay orange ("no team").
 # Colour is compared as (saturation*cos(hue), saturation*sin(hue), TEAM_FEATURE_V_WEIGHT*brightness) rather than raw B,G,R:
 # raw BGR is dominated by brightness, so the same orange vest in sun and in shade landed in different teams.
 TEAM_MIN_BOX_HEIGHT_PX = 40

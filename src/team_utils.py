@@ -124,7 +124,7 @@ def build_team_model(colors_bgr, session):
 
 
 def team_color(team):
-    """Box colour (BGR) for a team value: 0 -> Team A yellow, 1 -> Team B magenta, anything else (NaN, -1) -> grey."""
+    """Box colour (BGR) for a team value: 0 -> Team A yellow, 1 -> Team B magenta, anything else (NaN, -1) -> orange."""
     if team is None or (isinstance(team, float) and np.isnan(team)):
         return DETECTION_COLORS["player_unassigned"]
     team = int(team)
@@ -140,7 +140,7 @@ class LiveTeamColorizer:
     Stage 1 live preview only: gives each player box its team colour WHILE the video is still being read, before
     Stage 2's real clustering exists. It learns the two jersey colours online (a TeamModel refitted every `refit_every`
     frames on the chest colours of the larger players seen so far) and smooths each track's label over its last few
-    frames. Until it has seen enough players it returns None (drawn grey). The CSV never contains these labels - Stage 2
+    frames. Until it has seen enough players it returns None (drawn orange). The CSV never contains these labels - Stage 2
     recomputes every team from the whole video - so a preview colour can differ slightly.
     """
 

@@ -42,3 +42,5 @@ dist/
 # ---- local per-machine files ----
 .claude/
 tools/review_tool/state.json
+
+models/coach_llm/

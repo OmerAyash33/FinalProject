@@ -36,13 +36,15 @@ TARGET_WIDTH = 960 if _HAS_CUDA else 480
 PREVIEW_WIDTH = 1280
 
 # What it does: show the live view while Stage 1 extracts data (boxes, team colours, Players/Ball/Goal read-out, frame x of N).
-# Drawing EVERY frame cost a lot (measured: ~8 frames/s with the window, ~48 without), so the view is now drawn only LIVE_PREVIEW_FPS
-# times per second (the detections of all the other frames are still made and written; the CSV is identical either way).
+# The view is drawn at most LIVE_PREVIEW_FPS times per second (default 60 = effectively every frame: a gate of 30 would only ever pass every 2nd frame at ~44 frames/s; when the extraction
+# is slower than that, every frame is shown). Drawing every frame in an OpenCV window cost a lot (~8 frames/s vs ~48 without), so the
+# app's picture is drawn at the AI resolution and encoded on its own thread. The detections of every frame are made and written either
+# way; the CSV is identical with the view on or off.
 # FOOTBALL_LIVE_PREVIEW=0 turns the live view off (tools/extract_data_only.py always runs without it).
 # FOOTBALL_PREVIEW_FILE=<path.jpg>: instead of an OpenCV window the latest view is written to that JPEG (the desktop app shows it in its own
 # "Live view" window; a windowless worker process cannot show one itself).
 LIVE_PREVIEW = os.environ.get("FOOTBALL_LIVE_PREVIEW", "1") != "0"
-LIVE_PREVIEW_FPS = float(os.environ.get("FOOTBALL_PREVIEW_FPS", "6"))
+LIVE_PREVIEW_FPS = float(os.environ.get("FOOTBALL_PREVIEW_FPS", "60"))
 LIVE_PREVIEW_FILE = os.environ.get("FOOTBALL_PREVIEW_FILE") or None
 
 # What it does: how many extracted-data rows accumulate in RAM before being
@@ -105,9 +107,10 @@ DETECTION_COLORS = {
     "goal": (170, 40, 0),              # dark blue
     "team_a": (0, 255, 255),           # yellow   - OUR team (see event_params.OUR_SHADE_BY_SESSION)
     "team_b": (255, 0, 255),           # magenta  - the opponents
-    # mid grey - detected, but no team yet / no stable track. Deliberately DARK: the old light grey (170) was read as white on
-    # compressed video, and white is reserved for the ball (checked 2026-11-12: ~21% of the person boxes in the rendered clips are "no team").
-    "player_unassigned": (120, 120, 120),
+    # orange - detected, but no team yet / no stable track (~21% of the person boxes). It used to be grey (first 170, then 120), but a thin grey
+    # line over dark grass or sky still reads as white on compressed video, and white is reserved for the ball: any colour that is not
+    # white, yellow or magenta is "a person without a team". (Changed 2026-11-14.)
+    "player_unassigned": (0, 110, 255),
     "ball": (255, 255, 255),           # white - the ONLY white box
 }
 EVENT_COLORS = {

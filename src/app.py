@@ -99,6 +99,7 @@ class App:
         r.update_idletasks()   # the screen's text scale decides how tall the five steps are: size the window to its content (as far as the screen allows) so Step 4's progress bar and log are never cut off
         r.geometry(f"900x{max(640, min(r.winfo_reqheight() + 10, r.winfo_screenheight() - 80))}")
         r.after(150, self._pump)
+        r.after(40, self._live_loop)
 
     # ---- layout
     def _step(self, number, title, side="top", expand=False):
@@ -351,10 +352,13 @@ class App:
                     val()
         except queue.Empty:
             pass
-        self._live_tick()
         self.root.after(150, self._pump)
 
-    # ---- live view (the worker writes the latest annotated frame to a JPEG about 6 times a second; this window shows it)
+    # ---- live view (the worker writes the latest annotated frame to a JPEG up to 30 times a second; this window polls it every few ms and decodes only when a new picture has arrived)
+    def _live_loop(self):
+        self._live_tick()
+        self.root.after(8, self._live_loop)
+
     def _live_open(self, path):
         tk = self.tk
         try:
@@ -371,7 +375,7 @@ class App:
             x = max(0, self.root.winfo_screenwidth() - 820)
         w.geometry(f"800x500+{x}+{self.root.winfo_y()}")
         w.minsize(320, 220)
-        tk.Label(w, text="Players are drawn in their team's colour (yellow = ours, magenta = the others, grey = not decided yet), the ball is white, the goal blue. "
+        tk.Label(w, text="Players are drawn in their team's colour (yellow = ours, magenta = the others, orange = not decided yet), the ball is white, the goal blue. "
                          "The extraction itself is not slowed down.", bg=BG, fg=MUTED, font=FONT_SMALL, wraplength=780, justify="left").pack(anchor="w", padx=8, pady=(6, 2))
         frame = tk.Frame(w, bg="#000000")
         frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
@@ -403,8 +407,11 @@ class App:
             m = os.stat(self._live_path).st_mtime_ns
             if m == self._live_mtime:
                 return
+            import io
             from PIL import Image, ImageTk
-            im = Image.open(self._live_path)
+            with open(self._live_path, "rb") as f:        # read the bytes at once and decode from memory: the file is locked for as short a time as possible
+                data = f.read()
+            im = Image.open(io.BytesIO(data))
             im.load()
             self._live_mtime = m
             fw, fh = max(self._live_frame.winfo_width(), 50), max(self._live_frame.winfo_height(), 50)
@@ -413,7 +420,7 @@ class App:
             self._live_img = ImageTk.PhotoImage(im)      # keep a reference, Tk drops the picture otherwise
             self._live_label.config(image=self._live_img, text="")
         except Exception:
-            return    # file missing / being replaced right now: the next tick (150 ms) picks it up
+            return    # file missing / being replaced right now: the next tick (a few ms) picks it up
 
     # ---- running
     def _spawn(self, stage, cfg, stage_no, stage_total):
@@ -542,7 +549,7 @@ def run_selftest(out_path):
     """`FootballHighlights.exe --selftest out.txt`: imports everything the window and the worker need (for checking a packaged build)."""
     lines = []
     for name in ("torch", "cv2", "numpy", "pandas", "sklearn.cluster", "scipy.signal", "av", "PIL.ImageTk", "tkinter", "tkinterdnd2", "ultralytics",
-                 "team_color_picker", "main", "tactical_analyzer", "highlight_generator", "links", "shot_evidence"):
+                 "team_color_picker", "main", "tactical_analyzer", "highlight_generator", "links", "shot_evidence", "coach"):
         try:
             __import__(name)
             lines.append(f"ok    {name}")

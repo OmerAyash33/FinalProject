@@ -15,7 +15,7 @@ import glob
 import os
 import sys
 
-os.environ.setdefault("FOOTBALL_LIVE_PREVIEW", "1")          # live view of the detections (drawn 6x a second, costs ~5% speed; FOOTBALL_LIVE_PREVIEW=0 turns it off, "q" in the window closes just the window)
+os.environ.setdefault("FOOTBALL_LIVE_PREVIEW", "1")          # live view of the detections (drawn up to 30x a second, costs ~10% speed; FOOTBALL_LIVE_PREVIEW=0 turns it off, "q" in the window closes just the window)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
 

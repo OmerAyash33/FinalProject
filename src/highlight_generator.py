@@ -9,6 +9,7 @@ import cv2
 # `import pandas; import torch` fails, `import torch; import pandas` doesn't -
 # some DLL pandas loads shadows one torch's c10.dll depends on).
 from config import UI_COLORS, UI_SETTINGS, DETECTION_COLORS, EVENT_COLORS
+from coach import coach_line
 from logging_utils import log
 from team_utils import team_color
 
@@ -31,6 +32,21 @@ def _num(row, key, default=None):
     return default if v is None or pd.isna(v) else v
 
 
+def _wrap(text, max_px, font, scale, thickness):
+    """Greedy word wrap by rendered width, for the coach line on the summary card."""
+    lines, cur = [], ""
+    for word in text.split():
+        trial = (cur + " " + word).strip()
+        if not cur or cv2.getTextSize(trial, font, scale, thickness)[0][0] <= max_px:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 class HighlightGenerator:
     """
     Renders bounding boxes and event graphics onto the original video at
@@ -41,7 +57,7 @@ class HighlightGenerator:
     correction needed.)
 
     Everything the detector found is drawn, in the colours defined once in config.py (the same ones the Stage 1 live
-    preview uses): goal dark blue, ball white, our team (A) yellow, the opponents (B) magenta, players without a team grey.
+    preview uses): goal dark blue, ball white, our team (A) yellow, the opponents (B) magenta, players without a team orange.
     The banner is coloured by event type (config.EVENT_COLORS).
 
     `events_df`: the events to render (main.py passes the top-N selection). When None, every event of `events_csv` is rendered.
@@ -100,6 +116,7 @@ class HighlightGenerator:
         cap = cv2.VideoCapture(self.original_video)
         fps = cap.get(cv2.CAP_PROP_FPS)
 
+        video_name = os.path.splitext(os.path.basename(self.original_video))[0]   # seeds the wording of the coach lines
         hd_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         hd_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -161,7 +178,7 @@ class HighlightGenerator:
                     # players and ball sit on top of it), then the ball, then the players.
                     for _, obj in frame_objects[frame_objects["type"] == "goal"].iterrows():
                         x1, y1, x2, y2 = self._hd_box(obj, scale_to_hd_x, scale_to_hd_y)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), DETECTION_COLORS["goal"], 3)
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), DETECTION_COLORS["goal"], UI_SETTINGS["box_thickness"])
                         cv2.putText(frame, "GOAL", (x1, max(label_px, y1 - 8)), UI_SETTINGS["font_style"],
                                     label_scale, UI_COLORS["black"], 4)
                         cv2.putText(frame, "GOAL", (x1, max(label_px, y1 - 8)), UI_SETTINGS["font_style"],
@@ -169,12 +186,12 @@ class HighlightGenerator:
 
                     for _, obj in frame_objects[frame_objects["type"] == "sports ball"].iterrows():
                         x1, y1, x2, y2 = self._hd_box(obj, scale_to_hd_x, scale_to_hd_y)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), DETECTION_COLORS["ball"], 3)
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), DETECTION_COLORS["ball"], UI_SETTINGS["box_thickness"])
 
                     for _, obj in frame_objects[frame_objects["type"] == "person"].iterrows():
                         x1, y1, x2, y2 = self._hd_box(obj, scale_to_hd_x, scale_to_hd_y)
-                        # team 0 = A (ours, yellow), 1 = B (magenta); NaN / -1 = detected but no team -> grey
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), team_color(obj.get("team_cluster")), 2)
+                        # team 0 = A (ours, yellow), 1 = B (magenta); NaN / -1 = detected but no team -> orange
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), team_color(obj.get("team_cluster")), UI_SETTINGS["box_thickness"])
 
                 # Black shadow pass underneath, then the colored text on top -> readable on any background.
                 banner = EVENT_LABELS.get(active_label, active_label)
@@ -194,19 +211,35 @@ class HighlightGenerator:
                     card_label = best["type"]
                     card_color = EVENT_COLORS.get(card_label, UI_COLORS["white"])
                     lines = self._card_lines(best["row"])
-                    card_overlay = frame.copy()
-                    card_w, card_h = 560, 80 + 36 * len(lines)
+                    tip = None
+                    try:    # one coaching sentence per move (src/coach.py); never lets the render fail
+                        tip, tip_facts = coach_line(best["row"], raw_df, video_name)
+                        log(f"Coach ({card_label}, frame {int(best['row']['start_frame'])}): {tip}   [{tip_facts}]")
+                    except Exception as exc:   # noqa: BLE001
+                        log(f"Coach line skipped: {exc!r}")
+                    k = max(1.0, hd_width / 1920)      # the card keeps its size relative to the picture on 4K footage too
+                    font, thick = UI_SETTINGS["font_style"], max(1, int(round(k)))
+                    card_w = int((760 if tip else 560) * k)
+                    tip_lines = _wrap(tip, card_w - int(40 * k), font, 0.65 * k, thick) if tip else []
+                    card_h = int((80 + 36 * len(lines) + (50 + 32 * len(tip_lines) if tip else 0)) * k)
                     card_x, card_y = (hd_width - card_w) // 2, (hd_height - card_h) // 2
+                    card_overlay = frame.copy()
 
                     cv2.rectangle(card_overlay, (card_x, card_y), (card_x + card_w, card_y + card_h),
                                   UI_COLORS["stats_card_bg"], -1)
                     cv2.addWeighted(card_overlay, 0.9, frame, 0.1, 0, frame)  # 90% opaque card over the frozen frame
-                    cv2.rectangle(frame, (card_x, card_y), (card_x + card_w, card_y + card_h), card_color, 3)
-                    cv2.putText(frame, EVENT_LABELS.get(card_label, card_label), (card_x + 20, card_y + 45),
-                                UI_SETTINGS["font_style"], 1.0, card_color, 2)
+                    cv2.rectangle(frame, (card_x, card_y), (card_x + card_w, card_y + card_h), card_color, 3 * thick)
+                    cv2.putText(frame, EVENT_LABELS.get(card_label, card_label), (card_x + int(20 * k), card_y + int(45 * k)),
+                                font, 1.0 * k, card_color, 2 * thick)
                     for i, text in enumerate(lines):
-                        cv2.putText(frame, text, (card_x + 20, card_y + 90 + 36 * i), UI_SETTINGS["font_style"], 0.7,
-                                    UI_COLORS["light_gray"], 1)
+                        cv2.putText(frame, text, (card_x + int(20 * k), card_y + int((90 + 36 * i) * k)), font, 0.7 * k,
+                                    UI_COLORS["light_gray"], thick)
+                    if tip:   # the coach line, under the measurements
+                        y0 = 90 + 36 * len(lines) + 16
+                        cv2.putText(frame, "COACH", (card_x + int(20 * k), card_y + int(y0 * k)), font, 0.6 * k, (255, 200, 120), thick)
+                        for i, text in enumerate(tip_lines):
+                            cv2.putText(frame, text, (card_x + int(20 * k), card_y + int((y0 + 30 + 32 * i) * k)), font, 0.65 * k,
+                                        UI_COLORS["white"], thick)
 
                     # "Pause": just re-encode the identical frame for ~2 seconds' worth of frames.
                     freeze_duration_frames = int(fps * 2.0)

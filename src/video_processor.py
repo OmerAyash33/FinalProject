@@ -1,5 +1,6 @@
 """STAGE 1 of the pipeline: YOLO detection/tracking + jersey-color extraction (see main.py for the full stage list)."""
 import os
+import threading
 import time
 from collections import deque
 import queue
@@ -42,16 +43,52 @@ def _put_text(img, text, org, scale, color, thickness=1):
 
 def _write_preview(img, path):
     """Latest live view as a JPEG for the desktop app: written to a temp name and swapped in, so the reader never sees a half-written file."""
-    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
     if not ok:
         return
     tmp = path + ".tmp"
-    try:
-        with open(tmp, "wb") as f:
-            f.write(buf.tobytes())
-        os.replace(tmp, path)
-    except OSError:
-        pass   # the reader had the file open at that very moment; the next view is 1/6 s away
+    for attempt in range(3):
+        try:
+            with open(tmp, "wb") as f:
+                f.write(buf.tobytes())
+            os.replace(tmp, path)
+            return
+        except OSError:
+            time.sleep(0.003)   # the reader had the file open at that very moment (Windows refuses the swap): try again in a moment, then give up on this picture
+
+
+class _PreviewWriter:
+    """Encodes and writes the live-view JPEGs on a thread of its own (cv2 and file I/O release the GIL), so the extraction loop only pays for
+    drawing the picture. Latest picture wins: if the writer is momentarily behind, the older one is simply replaced, never queued."""
+
+    def __init__(self, path):
+        self.path = path
+        self._img = None
+        self._stop = False
+        self._cond = threading.Condition()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def submit(self, img):
+        with self._cond:
+            self._img = img
+            self._cond.notify()
+
+    def close(self):
+        with self._cond:
+            self._stop = True
+            self._cond.notify()
+        self._thread.join(timeout=3.0)
+
+    def _run(self):
+        while True:
+            with self._cond:
+                while self._img is None and not self._stop:
+                    self._cond.wait()
+                img, self._img = self._img, None
+            if img is None:
+                return
+            _write_preview(img, self.path)
 
 
 class VideoProcessor:
@@ -107,12 +144,15 @@ class VideoProcessor:
         cap.release()
 
         # Preview canvas: fixed width, height derived to preserve the source
-        # video's own aspect ratio (never squished/stretched).
-        preview_height = int(round(native_height * PREVIEW_WIDTH / native_width))
-        view_on = self.show_preview            # the live view is drawn only LIVE_PREVIEW_FPS times a second (see config.py); 'q' / closing the window switches it off, the extraction goes on
+        # video's own aspect ratio (never squished/stretched). The app's live-view window is smaller than 1280 px anyway, so the picture that
+        # goes to it is drawn at the AI resolution itself (no upscale, a smaller JPEG): that is what keeps a smooth view cheap.
+        canvas_w = TARGET_WIDTH if LIVE_PREVIEW_FILE else PREVIEW_WIDTH
+        preview_height = int(round(native_height * canvas_w / native_width))
+        view_on = self.show_preview            # the live view is drawn at most LIVE_PREVIEW_FPS times a second (see config.py); 'q' / closing the window switches it off, the extraction goes on
         view_every = 1.0 / max(LIVE_PREVIEW_FPS, 0.5)
         last_view = 0.0
         video_name = os.path.basename(self.video_path)
+        writer = _PreviewWriter(LIVE_PREVIEW_FILE) if (view_on and LIVE_PREVIEW_FILE) else None
         if view_on and not LIVE_PREVIEW_FILE:
             cv2.namedWindow("Football Video", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Football Video", PREVIEW_WIDTH, preview_height)
@@ -171,9 +211,13 @@ class VideoProcessor:
             # directly on the small frame and letting the OS window stretch the
             # result afterward is what caused the old blocky/pixelated look - the
             # text itself was rasterized small and then blown up.
-            display_frame = (cv2.resize(frame, (PREVIEW_WIDTH, preview_height), interpolation=cv2.INTER_CUBIC)
-                             if view else None)
-            scale_x = PREVIEW_WIDTH / frame_width
+            if not view:
+                display_frame = None
+            elif frame_width == canvas_w:
+                display_frame = frame.copy()
+            else:
+                display_frame = cv2.resize(frame, (canvas_w, preview_height), interpolation=cv2.INTER_CUBIC)
+            scale_x = canvas_w / frame_width
             scale_y = preview_height / frame_height
 
             # ONE call covers all three classes now - conf/max_det tuned for a
@@ -272,8 +316,8 @@ class VideoProcessor:
             _put_text(display_frame, "Team A (ours)", (40, 110), 0.6, DETECTION_COLORS["team_a"])
             _put_text(display_frame, "Team B", (230, 110), 0.6, DETECTION_COLORS["team_b"])
 
-            if LIVE_PREVIEW_FILE:
-                _write_preview(display_frame, LIVE_PREVIEW_FILE)
+            if writer is not None:
+                writer.submit(display_frame)
             else:
                 cv2.imshow("Football Video", display_frame)
                 key = cv2.waitKey(1) & 0xFF
@@ -282,6 +326,8 @@ class VideoProcessor:
                     cv2.destroyAllWindows()
 
         reader.stop()
+        if writer is not None:
+            writer.close()
         if self.show_preview and not LIVE_PREVIEW_FILE:
             cv2.destroyAllWindows()
 

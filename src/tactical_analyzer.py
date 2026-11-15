@@ -88,10 +88,10 @@ class DataAnalyzer:
             df = df.merge(stable_colors[["team_cluster"]], on="track_id", how="left")
             if load_reference(session_of(self.raw_csv)) is not None:
                 log("DataAnalyzer: our team colour = the shirt colour you picked for this session (team_colors.json): Team A (ours, yellow) = players "
-                    "closest to it, Team B (magenta) = the others. Players too small or without a stable track stay unassigned (grey).")
+                    "closest to it, Team B (magenta) = the others. Players too small or without a stable track stay unassigned (orange).")
             else:
                 log(f"DataAnalyzer: our shade is '{shade}': Team A (ours, yellow) = the {shade} cluster, Team B (magenta) = the other. "
-                    f"Players too small or without a stable track stay unassigned (grey).")
+                    f"Players too small or without a stable track stay unassigned (orange).")
         else:
             df["team_cluster"] = np.nan  # fewer than 2 usable tracked players -> nothing to cluster
 
