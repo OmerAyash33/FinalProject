@@ -225,10 +225,10 @@ def detect_events(df, track, team_model, fps=30.0, scene=None, audio=None):
             continue
         pressure, n = 0.0, 0
         for f in t.index[(t.index >= h["start"]) & (t.index <= h["end"]) & t["seen"]].values:
-            pressure += _pressure_around(scene, int(f), (t.at[f, "x"], t.at[f, "y"]))
+            pressure += _pressure_around(scene, int(f), (t.at[f, "x"], t.at[f, "y"]), radius_heights=P.DRIBBLE_PRESSURE_RADIUS_HEIGHTS)
             n += 1
         events.append({"event_type": cls, "category": "DRIBBLE", "start_frame": h["start"], "end_frame": h["end"],
-                       "duration_frames": duration, "visibility": h["seen_frac"],
+                       "duration_frames": duration, "visibility": h["seen_frac"], "hits": h["hits"],
                        "pressure": pressure / n if n else 0.0, "reasoning": f"Hold {duration}f ({duration / fps:.2f}s), seen {h['hits']}x."})
 
     # ---- flights: triggered by hold ends ----
@@ -499,7 +499,11 @@ def _judge_pass(scene, track, f0, mean_speed, team_model, fps):
     if p_ours is None or margin < P.TEAM_MIN_MARGIN:
         return _unresolved(f0, mean_speed, f"Receiver's team unclear (margin {margin:.2f}).", fps)
     ours = p_ours >= 0.5
-    pressure = _pressure_around(scene, f_rec, (row["x_center"], row["y_center"] + row["height"] / 2)) if ours else 0
+    # Same measure for both outcomes: opponents around the receiver's feet. After a failed pass the receiver IS an opponent, so he counts as well (at least 1):
+    # the pass ended where a defender stood, and a crowd of defenders there is what made it a hard pass.
+    pressure = _pressure_around(scene, f_rec, (row["x_center"], row["y_center"] + row["height"] / 2))
+    if not ours:
+        pressure = max(1, pressure)
     vis = len(track.sightings(f0, f_ref)) / float(max(1, f_ref - f0 + 1))
     return {"event_type": "PASS_SUCCESS" if ours else "PASS_INCOMPLETE", "category": "PASS_SUCCESS" if ours else "PASS_INCOMPLETE",
             "start_frame": int(f0), "end_frame": int(f_ref), "speed": mean_speed, "length_px": length,

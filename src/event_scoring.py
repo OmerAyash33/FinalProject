@@ -5,6 +5,8 @@ Event scores (0-100) and the choice of which events enter the final video.
 first scaled to 0..1 (event_params.SCORE_* give the value that earns the full component, SCORE_WEIGHTS the
 weights). What each component measures:
   duration         how long the possession lasted                               (dribble)
+  count            in how many of its frames the ball was really detected: SCORE_COUNT_FULL_FRAMES earn 1.0, each frame fewer takes
+                   SCORE_COUNT_STEP off, never below SCORE_COUNT_MIN                                  (dribble)
   length           how far the ball travelled in the pass, scene pixels         (passes)
   speed            mean ball speed relative to the scene, bw/frame              (passes, shots)
   pressure         opponents around the receiver / the dribbler                 (pass success, dribble)
@@ -31,6 +33,9 @@ def _components(e):
          "pressure": _clip(e.get("pressure", 0.0) / P.SCORE_PRESSURE_FULL)}
     if e["category"] == "DRIBBLE":
         c["duration"] = _clip(e.get("duration_frames", 0) / P.SCORE_DRIBBLE_FULL_FRAMES)
+        hits = e.get("hits")
+        if hits is not None and np.isfinite(hits):   # events written before 2026-11-15 have no `hits`: the count component then drops out
+            c["count"] = max(P.SCORE_COUNT_MIN, _clip(1.0 - P.SCORE_COUNT_STEP * (P.SCORE_COUNT_FULL_FRAMES - float(hits))))
     if e["category"] in ("PASS_SUCCESS", "PASS_INCOMPLETE"):
         c["length"] = _clip(e.get("length_px", 0.0) / P.SCORE_LENGTH_FULL_PX)
         c["team_confidence"] = _clip(e.get("team_margin", 0.0))
@@ -50,7 +55,7 @@ def _components(e):
 def score_event(e):
     """0-100 score of one event dict: weighted mean of its components (weights = SCORE_WEIGHTS[category])."""
     comp = _components(e)
-    weights = {k: w for k, w in P.SCORE_WEIGHTS[e["category"]].items() if k not in ("sound", "check") or k in comp}   # no audio -> the sound weight drops out; no self-check -> the check weight drops out
+    weights = {k: w for k, w in P.SCORE_WEIGHTS[e["category"]].items() if k not in ("sound", "check", "count") or k in comp}   # no audio -> the sound weight drops out; no self-check -> the check weight drops out; no hit count -> the count weight drops out
     total = sum(weights.values())
     return 100.0 * sum(w * comp.get(name, 0.0) for name, w in weights.items()) / total
 

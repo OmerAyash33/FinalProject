@@ -25,7 +25,7 @@ from team_utils import build_team_model, our_shade, session_of
 # classified against the fit (via predict()), never allowed to shape it.
 MIN_FRAMES_FOR_TEAM_FIT = 8
 
-EVENT_COLUMNS = ["event_type", "category", "start_frame", "end_frame", "score", "duration_frames", "speed", "length_px",
+EVENT_COLUMNS = ["event_type", "category", "start_frame", "end_frame", "score", "duration_frames", "hits", "speed", "length_px",
                  "team_margin", "pressure", "visibility", "overlap_frames", "overlap_fraction", "closeness_goal_widths", "kick_z",
                  "shot_origin", "shot_confidence", "reasoning"]
 

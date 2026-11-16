@@ -74,6 +74,11 @@ DRIBBLE_MIN_FRAMES = 12           # 0.4 s  (same as the old DRIBBLE threshold)
 DRIBBLE_MEDIUM_MIN_FRAMES = 20    # from this length: medium (0.67 s). The three classes are the terciles of the 197 holds >= 12 frames in 21 videos (12 May + 9 July;
 DRIBBLE_LONG_MIN_FRAMES = 33      # from this length: long (1.1 s)         May alone gave 18 / 27, July alone 22 / 39 - the pooled values sit in between). Re-derive with tools/analyze_event_params.py (section 2)
                                   # Check over all 38 videos (May + July + January, 318 holds): 19 / 32 - one frame from the values here, so these were kept.
+# Opponents count as "close to the ball" for a dribble's pressure when their feet are within this many of THEIR OWN heights of it. The hold itself is only
+# defined where nobody is within HOLD_CONTESTED_DIST_HEIGHTS (0.8) of the ball, so the old radius of 1.0 left a ring of 0.2 heights and 96% of dribbles had
+# pressure 0. Measured 2026-11-15 on 297 holds (39 videos), share of dribbles with any opponent close: radius 1.0 -> 3%, 1.5 -> 8%, 2.0 -> 11%, 2.5 -> 15%, 3.0 -> 19%.
+# 2.0 heights is about 3.5 m for an adult. Only players with a team colour count (opponents = team 1).
+DRIBBLE_PRESSURE_RADIUS_HEIGHTS = 2.0
 
 # ===========================================================================
 # 3. PASS
@@ -94,7 +99,9 @@ TEAM_VOTE_WINDOWS = (6, 8, 10)    # the receiver's team is decided over windows 
 TEAM_VOTE_MODE = "average"        # "average": mean of the three windows' team probabilities; "best": the most confident window
 TEAM_MIN_MARGIN = 0.15            # |2*P(ours)-1| below this -> the receiver's colour is too close to both teams: pass dropped
 UNRESOLVED_PASS = "drop"          # flight whose receiver cannot be found: "drop" (no event) or "incomplete"
-PRESSURE_RADIUS_HEIGHTS = 1.0     # opponents within this many receiver-heights of the receiver count as pressure
+PRESSURE_RADIUS_HEIGHTS = 2.0     # opponents within this many of THEIR OWN heights of the receiver's feet count as pressure (passes; 1.0 until 2026-11-15, enlarged to 2.0 at the user's
+                                  # request, same as the dribble radius). For a pass that did NOT succeed the receiver is himself
+                                  # an opponent and counts too (at least 1): the ball ended up where a defender was, which is exactly what made the pass hard.
 
 # ===========================================================================
 # 4. SHOT
@@ -172,13 +179,22 @@ DRIBBLE_SELECTION = "per_class"      # "per_class": best N of each of the 3 leng
 
 # Each event score is a weighted sum of components that are first scaled to 0..1. Weights need not sum to 1
 # (they are normalised). See event_scoring.py for exactly what each component measures.
+# Changed 2026-11-15 (user's decisions): dribble gets a "count" component (frames in which the ball was really detected); a pass that did not succeed is scored exactly like
+# one that did (same weights, pressure included), so a hard pass that failed ranks like a hard pass that worked; shots weigh the kick sound and the ball speed most.
+# The shot weights add up to 1.10 and the dribble ones to 1.05 - harmless, the weights are normalised.
 SCORE_WEIGHTS = {
-    "DRIBBLE": {"duration": 0.45, "visibility": 0.25, "pressure": 0.30},
+    "DRIBBLE": {"duration": 0.30, "count": 0.25, "visibility": 0.25, "pressure": 0.25},
     "PASS_SUCCESS": {"length": 0.30, "speed": 0.15, "pressure": 0.25, "team_confidence": 0.15, "visibility": 0.15},
-    "PASS_INCOMPLETE": {"length": 0.30, "speed": 0.15, "team_confidence": 0.35, "visibility": 0.20},
-    "SHOT_ON_TARGET": {"speed": 0.35, "overlap": 0.30, "visibility": 0.35, "sound": 0.25, "check": 0.25},
-    "SHOT_OFF_TARGET": {"speed": 0.40, "closeness": 0.35, "visibility": 0.25, "sound": 0.25, "check": 0.25},
+    "PASS_INCOMPLETE": {"length": 0.30, "speed": 0.15, "pressure": 0.25, "team_confidence": 0.15, "visibility": 0.15},
+    # the 0.10 slot is the goal-contact component of each kind: overlap with the goal (on target) / closeness to it (off target)
+    "SHOT_ON_TARGET": {"sound": 0.40, "speed": 0.40, "check": 0.15, "overlap": 0.10, "visibility": 0.05},
+    "SHOT_OFF_TARGET": {"sound": 0.40, "speed": 0.40, "check": 0.15, "closeness": 0.10, "visibility": 0.05},
 }
+# "count" of a dribble: SCORE_COUNT_FULL_FRAMES frames with a real ball detection earn the full 1.0, every frame fewer takes SCORE_COUNT_STEP off, never below SCORE_COUNT_MIN
+# (50 frames: 1.00, 49: 0.98, ... 10: 0.20, 1: 0.02, 0: 0.01). 50 is the 95th percentile of the detected frames of the 297 holds measured 2026-11-15 (median 19, 75th 29, 90th 41).
+SCORE_COUNT_FULL_FRAMES = 50
+SCORE_COUNT_STEP = 0.02
+SCORE_COUNT_MIN = 0.01
 SCORE_LENGTH_FULL_PX = 400.0         # pass length (scene px at 960 wide) that earns the full "length" component
 SCORE_SPEED_FULL_BW = 4.0            # ball speed (bw/frame) that earns the full "speed" component
 SCORE_VISIBILITY_FULL = 0.5          # share of event frames with a real ball sighting that earns the full "visibility" component

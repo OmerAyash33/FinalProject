@@ -90,8 +90,8 @@ class HighlightGenerator:
             lines += [f"Possession: {d:.0f} frames ({d / 30:.1f} s)", f"Opponents close (avg): {_num(row, 'pressure', 0):.1f}"]
         elif et.startswith("PASS"):
             lines += [f"Ball speed: {_num(row, 'speed', 0):.1f} ball-widths/frame", f"Pass length: {_num(row, 'length_px', 0):.0f} px"]
-            if et == "PASS_SUCCESS":
-                lines.append(f"Opponents around receiver: {_num(row, 'pressure', 0):.0f}")
+            lines.append(f"Opponents around receiver: {_num(row, 'pressure', 0):.0f}" if et == "PASS_SUCCESS"
+                         else f"Opponents where the ball ended: {_num(row, 'pressure', 0):.0f}")
         else:
             lines += [f"Ball speed: {_num(row, 'speed', 0):.1f} ball-widths/frame", f"Frames overlapping the goal: {_num(row, 'overlap_frames', 0):.0f}"]
         return lines
