@@ -41,7 +41,7 @@ def evidence(scene, track, audio, f0, fps):
     cues = {
         "goal_size": ramp(scene.goal_width_max(f0 - 30, f0 + 90) / track.screen_w, *r["goal_size"]),
         "goal_frames": ramp(scene.goal_frames_between(f0, f0 + 90), *r["goal_frames"]),
-        "whip": ramp(scene.pan_max(f0 + 1, f0 + 26), *r["whip"]),
+        "whip": ramp(scene.pan_max(f0 + 1, f0 + 26) * P.REF_WIDTH_PX / track.screen_w, *r["whip"]),   # the ramp is in 960-wide pixels (see event_params.px)
         "ball_gone": ramp(len(post), *r["ball_gone"]),
     }
     if audio is not None:

@@ -476,9 +476,10 @@ def _end_of_flight(track, f0, mean_speed):
     f_end = min(track.n_frames, f0 + P.PASS_END_OFFSET_FRAMES)
     travel = v * (f_end - f0)
     n = float(np.hypot(*travel))
-    if n > P.PASS_VECTOR_MAX_PX:
-        travel = travel * (P.PASS_VECTOR_MAX_PX / n)
-        n = P.PASS_VECTOR_MAX_PX
+    max_px = P.px(P.PASS_VECTOR_MAX_PX, track.screen_w)    # the limit is given for a 960-wide frame (see event_params.px)
+    if n > max_px:
+        travel = travel * (max_px / n)
+        n = max_px
     sx, sy = t.at[f0, "sx"] + travel[0], t.at[f0, "sy"] + travel[1]
     return "vector", int(f_end), float(sx + t.at[f_end, "cx"]), float(sy + t.at[f_end, "cy"]), n
 
@@ -489,11 +490,12 @@ def _judge_pass(scene, track, f0, mean_speed, team_model, fps):
     if end is None:
         return _unresolved(f0, mean_speed, "Ball not seen again after the kick and no direction to follow.", fps)
     kind, f_ref, bx, by, length = end
+    length *= P.REF_WIDTH_PX / float(track.screen_w)       # the event's length is always in 960-wide pixels (what SCORE_LENGTH_FULL_PX and the coach bands are given in), whatever width the CSV was made at
     rec = _receiver(scene, f_ref, bx, by, P.PASS_RECEIVER_MAX_DIST_HEIGHTS if kind == "seen" else P.PASS_VECTOR_RECEIVER_DIST_HEIGHTS)
     if rec is None:
         return _unresolved(f0, mean_speed, f"No player near the ball's end point ({kind}) at f{f_ref}.", fps)
     _, f_rec, row = rec
-    if float(row["height"]) < P.TEAM_MIN_BOX_HEIGHT_PX:
+    if float(row["height"]) < P.px(P.TEAM_MIN_BOX_HEIGHT_PX, track.screen_w):
         return _unresolved(f0, mean_speed, "Receiver too small to read a jersey colour.", fps)
     p_ours, margin = _team_vote(scene, row, f_rec, team_model)
     if p_ours is None or margin < P.TEAM_MIN_MARGIN:

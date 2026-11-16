@@ -167,9 +167,9 @@ class LiveTeamColorizer:
                           if self.reference is not None else TeamModel(samples, self.shade, random_state=0))
             self._last_fit_frame = frame_no
 
-    def team_for(self, track_id, color_bgr, box_height):
-        """0 (ours), 1 (opponent) or None while unknown / the box is too small to read a colour from. A track's last 15 frames vote."""
-        if self.model is None or box_height < P.TEAM_MIN_BOX_HEIGHT_PX:
+    def team_for(self, track_id, color_bgr, box_height, frame_width=P.REF_WIDTH_PX):
+        """0 (ours), 1 (opponent) or None while unknown / the box is too small to read a colour from (`frame_width`: the width the box height is in). A track's last 15 frames vote."""
+        if self.model is None or box_height < P.px(P.TEAM_MIN_BOX_HEIGHT_PX, frame_width):
             return None
         p = float(self.model.prob_ours(color_bgr)[0])
         if track_id == -1:   # no stable ID, nothing to smooth over: use this single frame's colour

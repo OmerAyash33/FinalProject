@@ -18,7 +18,7 @@ from config import (TARGET_WIDTH, PREVIEW_WIDTH, CSV_WRITE_CHUNK, UI_COLORS, UI_
                      PERSON_CLASS_ID, BALL_CLASS_ID, GOAL_CLASS_ID)
 from logging_utils import log
 from camera_motion import CameraMotionEstimator
-from event_params import TEAM_MIN_BOX_HEIGHT_PX
+from event_params import TEAM_MIN_BOX_HEIGHT_PX, px
 from team_colors import load_reference
 from team_utils import LiveTeamColorizer, our_shade, session_of, team_color
 from video_reader import FastVideoReader
@@ -262,7 +262,7 @@ class VideoProcessor:
                         chest_crop = frame[chest_y1:chest_y2, chest_x1:chest_x2]
                         avg_color = np.average(np.average(chest_crop, axis=0), axis=0)
                         color_b, color_g, color_r = avg_color[0], avg_color[1], avg_color[2]
-                        if view and colorizer is not None and confidence >= 0.5 and height >= TEAM_MIN_BOX_HEIGHT_PX:
+                        if view and colorizer is not None and confidence >= 0.5 and height >= px(TEAM_MIN_BOX_HEIGHT_PX, frame_width):
                             frame_person_colors.append((color_b, color_g, color_r))
 
                 match_data.append({
@@ -280,7 +280,7 @@ class VideoProcessor:
                 if display_frame is not None:
                     px1, py1, px2, py2 = int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y)
                     if label == "person":
-                        box_color = team_color(colorizer.team_for(track_id, (color_b, color_g, color_r), height))
+                        box_color = team_color(colorizer.team_for(track_id, (color_b, color_g, color_r), height, frame_width))
                     elif label == "goal":
                         box_color = DETECTION_COLORS["goal"]
                     else:

@@ -53,7 +53,7 @@ def gather_candidates(video_csvs, max_candidates=300, seed=1, min_height=90):
         if not os.path.exists(csv):
             continue
         df = pd.read_csv(csv, usecols=lambda c: c in USE_COLS, low_memory=False)
-        pl = df[(df["type"] == "person") & (df["track_id"] != -1) & (df["height"] >= P.TEAM_MIN_BOX_HEIGHT_PX)
+        pl = df[(df["type"] == "person") & (df["track_id"] != -1) & (df["height"] >= P.px(P.TEAM_MIN_BOX_HEIGHT_PX, df["screen_w"]))
                 & (df["height"] >= P.PERSON_MIN_ASPECT * df["width"]) & (df["confidence"] >= 0.4)].copy()
         if pl.empty:
             continue

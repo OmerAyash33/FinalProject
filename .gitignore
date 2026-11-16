@@ -44,3 +44,6 @@ dist/
 tools/review_tool/state.json
 
 models/coach_llm/
+
+# OpenVINO export cache that src/yolo_utils.py creates on the first CPU run (rebuilt automatically)
+models/*_openvino_model/

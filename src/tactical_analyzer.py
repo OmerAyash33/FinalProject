@@ -70,7 +70,7 @@ class DataAnalyzer:
         # Only players ByteTrack actually assigned a stable ID can be clustered by track (their median colour denoises
         # single-frame lighting/motion blur), and only players big enough to show a jersey (see TEAM_MIN_BOX_HEIGHT_PX).
         color_cols = ["color_b", "color_g", "color_r"]
-        tracked = players[(players["track_id"] != -1) & (players["height"] >= P.TEAM_MIN_BOX_HEIGHT_PX)
+        tracked = players[(players["track_id"] != -1) & (players["height"] >= P.px(P.TEAM_MIN_BOX_HEIGHT_PX, players["screen_w"]))
                           & (players["height"] >= P.PERSON_MIN_ASPECT * players["width"])]
         if len(tracked["track_id"].unique()) >= 2:
             track_lengths = tracked.groupby("track_id").size()

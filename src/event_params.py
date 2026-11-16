@@ -35,6 +35,17 @@ OUR_SHADE_BY_SESSION = {
 # Colour is compared as (saturation*cos(hue), saturation*sin(hue), TEAM_FEATURE_V_WEIGHT*brightness) rather than raw B,G,R:
 # raw BGR is dominated by brightness, so the same orange vest in sun and in shade landed in different teams.
 TEAM_MIN_BOX_HEIGHT_PX = 40
+# Every "_PX" value in this file is given for a frame REF_WIDTH_PX wide (what a GPU run produces). A CSV made at another width - the CPU path
+# works at 480 - must be compared with the value scaled to its own frame: use px(value, screen_w). Without this a person had to be twice as
+# tall (relative to the picture) to get a team on the CPU path, and pass lengths came out half as long. (Added 2026-11-16.)
+REF_WIDTH_PX = 960
+
+
+def px(value, screen_w):
+    """A pixel value given for a REF_WIDTH_PX-wide frame, expressed in a frame `screen_w` wide (screen_w may be a pandas column)."""
+    return value * screen_w / float(REF_WIDTH_PX)
+
+
 TEAM_FEATURE_V_WEIGHT = 0.5
 # Team colour picker (src/team_color_picker.py): a HARD limit of this many clicked players per colour (ours / opponents) ...
 PICKER_MAX_PER_COLOR = 5
