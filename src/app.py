@@ -32,6 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 VIDEO_EXT = (".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mts")
 MASTER_NAME = "All_Matches_Master_Highlights.mp4"
 PATH_IN_LINE = re.compile(r"[A-Za-z]:[\\/].*$")   # an absolute Windows path at the end of a log line -> shown as a clickable link
+PROGRESS_EVERY_MS = 5000                           # the "x of N videos, about y min left" line and its bar are refreshed this often (it is a rough guide, see progress.py)
 
 
 # ------------------------------------------------------------------------------------------------ worker process
@@ -95,11 +96,15 @@ class App:
         self._live_win = self._live_frame = self._live_label = self._live_img = None
         self._live_path, self._live_mtime = None, 0
         self.status_var = tk.StringVar(value="")
+        from progress import RunProgress
+        self.prog = RunProgress()                  # the rough "x of N videos, about y min left" meter (src/progress.py); only touched on the main thread
+        self.progress_var = tk.StringVar(value="")
         self._build()
         r.update_idletasks()   # the screen's text scale decides how tall the five steps are: size the window to its content (as far as the screen allows) so Step 4's progress bar and log are never cut off
         r.geometry(f"900x{max(640, min(r.winfo_reqheight() + 10, r.winfo_screenheight() - 80))}")
         r.after(150, self._pump)
         r.after(40, self._live_loop)
+        r.after(PROGRESS_EVERY_MS, self._progress_tick)
 
     # ---- layout
     def _step(self, number, title, side="top", expand=False):
@@ -186,8 +191,11 @@ class App:
         tk.Label(btns, textvariable=self.status_var, bg=PANEL, fg=WARN, font=FONT, anchor="w", justify="left", wraplength=470).pack(side="left", padx=12, fill="x", expand=True)
         tk.Checkbutton(body, text="Show a live view of the detections while they are extracted (recommended)", variable=self.live_var, bg=PANEL, fg=FG,
                        selectcolor="#111111", activebackground=PANEL, activeforeground=FG, font=FONT_SMALL).pack(anchor="w", pady=(6, 0))
-        self.progress = ttk.Progressbar(body, mode="indeterminate")
-        self.progress.pack(fill="x", pady=(8, 4))
+        pf = tk.Frame(body, bg=PANEL)
+        pf.pack(fill="x", pady=(8, 4))
+        tk.Label(pf, textvariable=self.progress_var, bg=PANEL, fg=FG, font=FONT_SMALL, anchor="w", width=48).pack(side="left")   # fixed width: the bar does not jump sideways when the text changes
+        self.progress = ttk.Progressbar(pf, mode="determinate", maximum=1000)
+        self.progress.pack(side="left", fill="x", expand=True, padx=(10, 0))
         logf = tk.Frame(body, bg=PANEL)
         logf.pack(fill="both", expand=True)
         lsb = tk.Scrollbar(logf)
@@ -339,13 +347,13 @@ class App:
                 kind, val = self.msgs.get_nowait()
                 if kind == "log":
                     self._insert_log(val)
+                    self.prog.feed(val, time.time())       # the meter reads the worker's own log lines (a few per video)
                 elif kind == "status":
                     self.status_var.set(val)
                 elif kind == "busy":
                     if val:
-                        self.progress.start(12)
-                    else:
-                        self.progress.stop()
+                        self.progress["value"] = 0
+                        self.progress_var.set("Getting ready...")
                     self.start_btn.config(state="disabled" if val else "normal")
                     self.cancel_btn.config(state="normal" if val else "disabled")
                 elif kind == "call":
@@ -353,6 +361,36 @@ class App:
         except queue.Empty:
             pass
         self.root.after(150, self._pump)
+
+    # ---- progress meter: "Extracting: 2 of 5 videos done - about 11 min left" + a bar, refreshed every few seconds (the maths is in progress.py)
+    def _progress_show(self):
+        snap = self.prog.snapshot(time.time())
+        if snap["text"]:
+            self.progress_var.set(snap["text"])
+        self.progress["value"] = int(round(snap["fraction"] * 1000))
+
+    def _progress_tick(self):
+        if self.prog.running:
+            self._progress_show()
+        self.root.after(PROGRESS_EVERY_MS, self._progress_tick)
+
+    def _progress_start(self, frames, skip):
+        self.prog.start(frames, skip, time.time())
+        self._progress_show()
+
+    def _progress_stage(self, stage):
+        self.prog.set_stage(stage, time.time())
+        self._progress_show()
+
+    def _progress_stopped(self):
+        if self.prog.running:
+            self.prog.finish(False)
+            self.progress_var.set("")
+
+    def _progress_finish(self, ok, n_videos):
+        self.prog.finish(ok)
+        self.progress["value"] = 1000 if ok else self.progress["value"]
+        self.progress_var.set(f"Done - {n_videos} video{'' if n_videos == 1 else 's'}" if ok else "")
 
     # ---- live view (the worker writes the latest annotated frame to a JPEG up to 30 times a second; this window polls it every few ms and decodes only when a new picture has arrived)
     def _live_loop(self):
@@ -487,17 +525,25 @@ class App:
             from team_colors import load_reference
             will_pick = cfg["pick"] and load_reference(cfg["session"]) is None
             total = 3 if will_pick else 2
+            from progress import count_frames
+            frames = count_frames(cfg["videos"])                                  # the size of the work, for the meter (a second or two)
+            skip = [os.path.exists(csv) for _, csv in self._csv_pairs(cfg)]       # videos already extracted in an earlier run cost nothing
+            self.msgs.put(("call", lambda: self._progress_start(frames, skip)))
             self.set_status(f"Stage 1 of {total}: extracting the detections (the long part)")
             if not self._spawn("extract", cfg, 1, total):
                 self.set_status("Cancelled" if self.cancelled else "The extraction failed - see the log above")
                 return
             if will_pick:
+                self.msgs.put(("call", lambda: self._progress_stage("pick")))    # the clock of the meter stops while the user is choosing
                 self.set_status(f"Stage 2 of {total}: pick your team's shirt colour in the window that opened")
                 self._ask_colors_blocking(cfg)
+            self.msgs.put(("call", lambda: self._progress_stage("analyze")))
             self.set_status(f"Stage {total} of {total}: finding events and rendering the highlights")
             if not self._spawn("analyze", cfg, total, total):
                 self.set_status("Cancelled" if self.cancelled else "The analysis failed - see the log above")
                 return
+            ok_videos = len(cfg["videos"])
+            self.msgs.put(("call", lambda: self._progress_finish(True, ok_videos)))
             self.set_status(f"Finished in {(time.time() - t0) / 60:.1f} minutes - click a link in Step 5 to open your results")
             self.log(f"Finished in {(time.time() - t0) / 60:.1f} minutes. The links above (and in Step 5) open your results.")
             self.msgs.put(("call", lambda: self.show_results(out)))
@@ -505,6 +551,7 @@ class App:
             self.log(f"ERROR: {e!r}")
             self.set_status("Something went wrong - see the log above")
         finally:
+            self.msgs.put(("call", self._progress_stopped))   # a failed / cancelled run: the meter just stops (a finished run was closed above)
             self.msgs.put(("busy", False))
 
     def cancel(self):

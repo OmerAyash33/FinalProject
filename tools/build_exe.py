@@ -33,6 +33,8 @@ README = """Football highlights
 6. Step 5 - when the run is finished, click the links to open the highlight reel (All_Matches_Master_Highlights.mp4 = everything in one reel)
    or the results folder.
 
+- Step 4 shows how far the run is: "Extracting: 2 of 5 videos done - about 11 min left" and a bar, refreshed every 5 seconds. It is a rough guide
+  (the speed is measured as the run goes), and it stops counting while you choose the shirt colour.
 - The extraction is the slow stage: a few minutes per 5-minute video on an NVIDIA GPU. While it runs, a "Live view" window shows what the detector sees
   (players in their team colour, ball, goal); untick "Show a live view" in Step 4 if you do not want it. It costs about 10% speed.
 - Every highlighted move ends on a summary card; its COACH text is a few sentences on how the move went and what to try next time: praise when it
